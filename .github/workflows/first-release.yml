@@ -1,0 +1,67 @@
+name: First Release v1.0.0
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/first-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build installable APK
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease
+      - name: Publish v1.0.0 with APK
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          apk="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          test -n "$apk" && test -s "$apk"
+          cp "$apk" GakkiKeys-v1.0.0.apk
+
+          if gh release view v1.0.0 >/dev/null 2>&1; then
+            echo "v1.0.0 already exists; skipping duplicate release."
+            exit 0
+          fi
+
+          cat > /tmp/gakkikeys-release-notes.md <<'NOTES'
+          ## GakkiKeys v1.0.0 | 初回公開版
+
+          Androidのキーボード（IME）を楽器として演奏できる「楽器キー」の初回リリースです。
+
+          ### 主な機能
+          - **DRUM**: 12種類のドラム音をパッドで演奏
+          - **PIANO**: 2オクターブの鍵盤、グリッサンド、サステイン
+          - **SYNTH**: LEAD / SQUARE / PAD / BASS の4音色
+          - **文字入力**: QWERTY、ローマ字かな入力、英字、記号入力
+          - マルチタッチとリアルタイム音声合成に対応
+
+          ### インストール方法
+          1. Assets にある `GakkiKeys-v1.0.0.apk` をAndroid端末にダウンロードしてインストール
+          2. 「楽器キー」を開き、画面の案内からIMEを有効化して選択
+          3. 入力欄をタップして演奏または文字入力
+
+          **対応OS**: Android 9（API 28）以降
+
+          **注意**: 初回版APKはデバッグ鍵で署名した配布テスト版です。将来、異なる署名鍵を使う版へ更新する際は、いったんアンインストールが必要になります。
+          漢字変換辞書は未搭載です。
+          NOTES
+          gh release create v1.0.0 GakkiKeys-v1.0.0.apk \
+            --title "GakkiKeys v1.0.0" \
+            --target "$GITHUB_SHA" \
+            --notes-file /tmp/gakkikeys-release-notes.md
