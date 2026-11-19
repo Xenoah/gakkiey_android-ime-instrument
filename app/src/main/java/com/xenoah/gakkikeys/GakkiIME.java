@@ -37,7 +37,7 @@ public final class GakkiIME extends InputMethodService implements InstrumentView
         super.onStartInputView(info, restarting);
         comp.clear();
         if (view != null) view.onStartInput(info.inputType);
-        if (view == null || view.isInstrumentMode()) engine.start(this);
+        engine.start(this);
     }
 
     @Override
@@ -149,12 +149,6 @@ public final class GakkiIME extends InputMethodService implements InstrumentView
     @Override
     public boolean isComposing() {
         return !comp.isEmpty();
-    }
-
-    @Override
-    public void onModeChanged(boolean instrument) {
-        if (instrument) engine.start(this);
-        else engine.stop();
     }
 
     // ---- Host

@@ -9,7 +9,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * UI thread posts events; the audio thread owns every voice.
  */
 public final class SynthCore {
-    public static final int DRUM = 0, PIANO = 1, SYNTH = 2;
+    public static final int DRUM = 0, PIANO = 1, SYNTH = 2, SE = 3, DTMF = 4;
+    /** Number of one-shot sound effects. */
+    public static final int SE_COUNT = 18;
 
     // Drum indices
     public static final int KICK = 0, SNARE = 1, CLAP = 2, RIM = 3, CHAT = 4, OHAT = 5,
@@ -87,6 +89,16 @@ public final class SynthCore {
     /** Synth note with preset and brightness 0..1. */
     public void synthOn(int key, int midi, float vel, int preset, float bright) {
         post(EV_ON, key, SYNTH, preset, midi, vel, bright);
+    }
+
+    /** One-shot sound effect. ratio = pitch multiplier. */
+    public void se(int idx, float ratio, float vel) {
+        post(EV_ON, newKey(), SE, ((idx % SE_COUNT) + SE_COUNT) % SE_COUNT, ratio, vel, 0);
+    }
+
+    /** Telephone DTMF tone for 0-9, *, # (and A-D); sounds until noteOff. */
+    public void dtmfOn(int key, char c, float vel) {
+        post(EV_ON, key, DTMF, c, 0, vel, 0);
     }
 
     public void noteOff(int key) {
@@ -237,7 +249,7 @@ public final class SynthCore {
             }
             case EV_OFF: {
                 Voice v = find(e.key);
-                if (v == null || v.kind == DRUM) break;
+                if (v == null || v.kind == DRUM || v.kind == SE) break;
                 if (v.kind == PIANO && sustain) { v.held = true; break; }
                 release(v);
                 break;
@@ -274,6 +286,8 @@ public final class SynthCore {
             v.relDec = decayCoef(t);
         } else if (v.kind == SYNTH) {
             v.stage = 3;
+        } else if (v.kind == DTMF) {
+            v.relDec = decayCoef(0.008f);
         }
     }
 
@@ -340,6 +354,24 @@ public final class SynthCore {
             v.maxT = Integer.MAX_VALUE;
             for (int i = 0; i < 8; i++) v.ph[i] = (i * 0.318) % 1.0;
             setSvf(v, 1000, p[6]);
+        } else if (v.kind == DTMF) {
+            String keys = "123A456B789C*0#D";
+            int i = keys.indexOf(Character.toUpperCase((char) v.sub));
+            if (i < 0) i = 13;
+            double[] row = {697, 770, 852, 941}, col = {1209, 1336, 1477, 1633};
+            v.pf[0] = row[i / 4] / sr;
+            v.pf[1] = col[i % 4] / sr;
+            v.send = 0f;
+            v.maxT = (int) (sr * 6);
+        } else if (v.kind == SE) {
+            v.freq = e.a <= 0 ? 1.0 : e.a;
+            v.send = 0.08f;
+            float[] len = {0.08f, 0.40f, 0.20f, 0.20f, 0.08f, 0.13f, 0.05f, 1.2f, 0.6f,
+                    0.15f, 0.26f, 0.20f, 0.03f, 0.10f, 0.7f, 0.11f, 1.0f, 0.15f};
+            v.maxT = (int) (sr * len[v.sub]);
+            if (v.sub == 6) setSvf(v, 3000, 0.4f);
+            if (v.sub == 13) setSvf(v, 1800, 0.6f);
+            if (v.sub == 17) setSvf(v, (float) (1800 * v.freq), 0.3f);
         } else { // DRUM
             v.freq = 0;
             v.send = 0.10f;
@@ -378,6 +410,8 @@ public final class SynthCore {
             switch (v.kind) {
                 case PIANO: renderPiano(v, frames); break;
                 case SYNTH: renderSynth(v, frames); break;
+                case SE: renderSE(v, frames); break;
+                case DTMF: renderDtmf(v, frames); break;
                 default: renderDrum(v, frames); break;
             }
         }
@@ -523,6 +557,78 @@ public final class SynthCore {
             v.t++;
         }
         if ((v.stage == 3 && v.level < 1e-4f) || v.rel < 1e-4f) v.active = false;
+    }
+
+    private void renderDtmf(Voice v, int frames) {
+        float atk = 1f / (0.004f * sr);
+        float g = 0.28f * v.vel;
+        for (int i = 0; i < frames; i++) {
+            float s = sin(v.ph[0]) + sin(v.ph[1]);
+            v.ph[0] += v.pf[0]; if (v.ph[0] >= 1) v.ph[0] -= 1;
+            v.ph[1] += v.pf[1]; if (v.ph[1] >= 1) v.ph[1] -= 1;
+            if (v.released) v.rel *= v.relDec;
+            float o = s * g * Math.min(1f, v.t * atk) * v.rel;
+            mix[i] += o;
+            v.t++;
+        }
+        if (v.rel < 1e-4f || v.t > v.maxT) v.active = false;
+    }
+
+    private static float sq(double ph) { return ph < 0.5 ? 1f : -1f; }
+
+    private static float tri(double ph) { return (float) (1.0 - 4.0 * Math.abs(ph - 0.5)); }
+
+    private void renderSE(Voice v, int frames) {
+        float invSr = 1f / sr;
+        double r = v.freq;
+        float g = 0.6f * v.vel;
+        for (int i = 0; i < frames; i++) {
+            float t = v.t * invSr;
+            double f = 0, f2 = 0;
+            float s;
+            float env;
+            switch (v.sub) {
+                case 0: f = 880 * r; s = sq(v.ph[0]) * 0.6f; env = (float) Math.exp(-t / 0.03); break; // blip
+                case 1: f = (t < 0.07f ? 988 : 1319) * r; s = sq(v.ph[0]) * 0.55f;                     // coin
+                    env = t < 0.07f ? 0.8f : (float) Math.exp(-(t - 0.07f) / 0.12); break;
+                case 2: f = 300 * r * (1 + 2 * Math.min(t / 0.15, 1)); s = sq(v.ph[0]) * 0.5f;         // jump
+                    env = (float) Math.exp(-t / 0.09); break;
+                case 3: f = 1800 * r * Math.exp(-t / 0.06) + 150; s = (float) (2 * v.ph[0] - 1) * 0.6f; // laser
+                    env = (float) Math.exp(-t / 0.08); break;
+                case 4: f = 700 * r * Math.exp(-t / 0.02) + 150; s = sin(v.ph[0]);                      // pop
+                    env = (float) Math.exp(-t / 0.025); break;
+                case 5: f = Math.min(3000, 250 * r * Math.exp(t / 0.05)); s = sin(v.ph[0]);             // bubble
+                    env = (float) Math.exp(-t / 0.045) * Math.min(1f, t / 0.005f); break;
+                case 6: f = 150 * r; s = svf(v, noise(v), 1) * 1.6f * (float) Math.exp(-t / 0.006)       // typewriter
+                        + sin(v.ph[0]) * 0.5f * (float) Math.exp(-t / 0.01); env = 1f; break;
+                case 7: f = 1568 * r; f2 = 2349 * r; s = sin(v.ph[0]) * 0.6f + sin(v.ph[1]) * 0.4f;     // chime
+                    env = (float) Math.exp(-t / 0.35); break;
+                case 8: f = 180 * r * (1 + 0.4 * Math.sin(2 * Math.PI * 18 * t) * Math.exp(-t / 0.15)); // boing
+                    s = sin(v.ph[0]) * 0.7f + tri(v.ph[0]) * 0.3f; env = (float) Math.exp(-t / 0.25); break;
+                case 9: f = 1500 * r * Math.exp(-t / 0.04) + 100; s = sq(v.ph[0]) * 0.45f + noise(v) * 0.25f; // zap
+                    env = (float) Math.exp(-t / 0.05); break;
+                case 10: { int step = (int) (t / 0.035f); f = 523 * r * Math.pow(2, step * 4 / 12.0);   // power-up
+                    s = sq(v.ph[0]) * 0.5f; env = t < 0.18f ? 0.8f : (float) Math.exp(-(t - 0.18f) / 0.03); break; }
+                case 11: f = 1200 * r * Math.exp(-t / 0.05) + 300; s = sin(v.ph[0]);                     // drop
+                    env = (float) Math.exp(-t / 0.06); break;
+                case 12: f = 2200 * r; s = sin(v.ph[0]); env = (float) Math.exp(-t / 0.004); break;      // tick
+                case 13: f = 750 * r; s = sin(v.ph[0]) * (float) Math.exp(-t / 0.02)                      // wood
+                        + svf(v, noise(v), 1) * (float) Math.exp(-t / 0.005); env = 1f; break;
+                case 14: f = 1319 * r; s = tri(v.ph[0]); env = (float) Math.exp(-t / 0.2); break;        // tri bell
+                case 15: f = 1000 * r; s = Math.max(-0.6f, Math.min(0.6f, sin(v.ph[0]) * 1.5f));         // beep
+                    env = t < 0.08f ? 1f : (float) Math.exp(-(t - 0.08f) / 0.008); break;
+                case 16: f = 880 * r; f2 = 880 * 5.4 * r;                                                // kalimba
+                    s = sin(v.ph[0]) + sin(v.ph[1]) * 0.3f * (float) Math.exp(-t / 0.03); env = (float) Math.exp(-t / 0.3); break;
+                default: s = svf(v, noise(v), 0) * 1.2f; env = (float) Math.exp(-t / 0.05); break;     // noise hit
+            }
+            v.ph[0] = wrap(v.ph[0] + f / sr);
+            if (f2 > 0) v.ph[1] = wrap(v.ph[1] + f2 / sr);
+            float o = s * env * g;
+            mix[i] += o;
+            send[i] += o * v.send;
+            v.t++;
+        }
+        if (v.t > v.maxT) v.active = false;
     }
 
     private float hp1(Voice v, float x, float a) {
