@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">楽器キー</string>
+    <string name="subtype_label">楽器</string>
+</resources>
