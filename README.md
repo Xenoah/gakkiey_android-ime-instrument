@@ -4,7 +4,9 @@ Androidのキーボード（IME）がそのまま楽器になります。🥁ド
 音源ファイルは使わず、すべてリアルタイム合成（低遅延 AudioTrack, float PCM）。外部ライブラリなし・Javaのみ。
 
 ## ビルド
-- **GitHub Actions**: このフォルダをリポジトリにpushすると `Build APK` が走り、Artifacts に `GakkiKeys-apk` が出ます（release APK、debug鍵で署名済みなのでそのままインストール可）。
+- **GitHub Actions**: pushすると `Build APK` が実行され、Artifacts に `GakkiKeys-apk` が保存されます。`main` にアプリ本体・ビルド設定の変更がある場合は、ビルド成功後に次のパッチ版（例: `v1.0.0` → `v1.0.1`）をGitHub ReleasesへAPK付きで自動公開します。READMEやCI設定だけの変更では新規Releaseを作成しません。
+- **バージョン**: 自動公開時に最新のGitタグを参照して `versionName` と `versionCode` をAPKビルドに反映します。公開前にローカルのGradle設定を書き換える必要はありません。
+- **APK署名の注意**: 現在のrelease APKはCI環境のデバッグ鍵で署名しています。ビルドごとに鍵が変わりうるため、前版APKへの上書き更新は保証できません。上書き可能な正式配布を行うには永続的な署名鍵を安全に管理する必要があります。
 - **ローカル**: Android Studio で開いて Run、または `./gradlew assembleRelease`。
 
 ## 使い方
