@@ -4,20 +4,158 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: gakkikeys-build-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      publish: ${{ steps.prepare.outputs.publish }}
+      version: ${{ steps.prepare.outputs.version }}
+      previous: ${{ steps.prepare.outputs.previous }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine next release version
+        id: prepare
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "publish=false" >> "$GITHUB_OUTPUT"
+          git fetch --tags --force origin
+
+          # Never publish a stale push when a newer main commit is available.
+          remote_head="$(git ls-remote origin refs/heads/main | cut -f1)"
+          if [[ "$remote_head" != "$GITHUB_SHA" ]]; then
+            echo "Newer main commit exists; this run only builds an artifact."
+            exit 0
+          fi
+
+          latest="$(git tag --list --sort=-version:refname 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '1p' || true)"
+          if [[ -n "$latest" ]]; then
+            git merge-base --is-ancestor "$latest" "$GITHUB_SHA" || {
+              echo "Latest release tag is not an ancestor of main." >&2
+              exit 1
+            }
+            # Ignore README-only and CI-only updates.
+            if git diff --quiet "$latest" "$GITHUB_SHA" -- app build.gradle settings.gradle gradle gradlew gradlew.bat gradle.properties; then
+              echo "No app/build changes since $latest; skipping a new release."
+              exit 0
+            fi
+            IFS='.' read -r major minor patch <<< "$(echo "$latest" | cut -c2-)"
+            patch=$((patch + 1))
+          else
+            major=1
+            minor=0
+            patch=0
+          fi
+
+          if (( minor >= 100 || patch >= 10000 )); then
+            echo "Version exceeds Android versionCode component limits." >&2
+            exit 1
+          fi
+
+          version="v$major.$minor.$patch"
+          version_name="$major.$minor.$patch"
+          version_code=$((major * 1000000 + minor * 10000 + patch + 1))
+          if (( version_code > 2100000000 )); then
+            echo "Android versionCode is too large." >&2
+            exit 1
+          fi
+          grep -Eq '^[[:space:]]*versionCode[[:space:]]+[0-9]+$' app/build.gradle
+          grep -Eq "^[[:space:]]*versionName[[:space:]]+'[^']+'$" app/build.gradle
+          sed -i -E "s/^([[:space:]]*versionCode[[:space:]]+)[0-9]+$/\\1$version_code/" app/build.gradle
+          sed -i -E "s/^([[:space:]]*versionName[[:space:]]+)'[^']*'$/\\1'$version_name'/" app/build.gradle
+          grep -Fq "versionCode $version_code" app/build.gradle
+          grep -Fq "versionName '$version_name'" app/build.gradle
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "previous=${latest:-none}" >> "$GITHUB_OUTPUT"
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+          echo "Building $version (versionCode=$version_code)"
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+
       - name: Build
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon assembleRelease
+
       - uses: actions/upload-artifact@v4
         with:
           name: GakkiKeys-apk
           path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.ref == 'refs/heads/main' && needs.build.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: GakkiKeys-apk
+          path: artifacts
+
+      - name: Publish APK on GitHub Releases
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.build.outputs.version }}
+          PREVIOUS: ${{ needs.build.outputs.previous }}
+        run: |
+          set -euo pipefail
+          remote_head="$(git ls-remote origin refs/heads/main | cut -f1)"
+          if [[ "$remote_head" != "$GITHUB_SHA" ]]; then
+            echo "Newer commit on main; this release is skipped."
+            exit 0
+          fi
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "$VERSION already exists; refusing to publish a duplicate."
+            exit 0
+          fi
+
+          apk="$(find artifacts -type f -name '*.apk' -print -quit)"
+          test -n "$apk" && test -s "$apk"
+          cp "$apk" "GakkiKeys-$VERSION.apk"
+          sha256sum "GakkiKeys-$VERSION.apk"
+
+          {
+            echo "## GakkiKeys $VERSION"
+            echo
+            echo "Android楽器キーボード（IME）の自動ビルド版です。"
+            echo
+            if [[ "$PREVIOUS" != "none" ]]; then
+              echo "### 主な変更点（$PREVIOUS 以降）"
+              git log --no-merges -n 30 --pretty='- %s' "$PREVIOUS..$GITHUB_SHA" -- app build.gradle settings.gradle gradle gradlew gradlew.bat gradle.properties
+              echo
+            fi
+            echo "### 導入方法"
+            echo "Assets の \`GakkiKeys-$VERSION.apk\` をAndroid端末にインストールしてください。Android 9以降に対応しています。"
+            echo
+            echo "**署名に関する注意**: 現在のAPKはCIのデバッグ鍵で署名されています。別の実行で作成したAPKとは署名が異なる場合があり、既存アプリをアンインストールする必要があります。"
+          } > /tmp/gakkikeys-release-notes.md
+
+          gh release create "$VERSION" "GakkiKeys-$VERSION.apk" \
+            --title "GakkiKeys $VERSION" \
+            --target "$GITHUB_SHA" \
+            --notes-file /tmp/gakkikeys-release-notes.md \
+            --latest
