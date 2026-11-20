@@ -3,7 +3,6 @@ package com.xenoah.gakkikeys;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Canvas;
-import android.graphics.Color;
 import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.RectF;
@@ -46,6 +45,9 @@ public final class InstrumentView extends View {
             SynthCore.CRASH, SynthCore.OHAT, SynthCore.CHAT, SynthCore.COWBELL,
             SynthCore.TOM_H, SynthCore.TOM_M, SynthCore.TOM_L, SynthCore.BASS808,
             SynthCore.KICK, SynthCore.SNARE, SynthCore.CLAP, SynthCore.RIM};
+
+    /** Red / orange / yellow / cream, like the TR-808 step buttons. */
+    private static final int[] PAD_808_COLORS = {0xFFE5452F, 0xFFF08A24, 0xFFF2CF3C, 0xFFEDE6D3};
 
     private static final int MODE_DRUM = 0, MODE_KEYS = 1, MODE_TYPE = 3;
     private static final int PAGE_LETTERS = 0, PAGE_NUM = 1, PAGE_SYM = 2;
@@ -188,7 +190,7 @@ public final class InstrumentView extends View {
         octave = clamp(octave, 1, maxOctave());
         for (int i = 0; i < 12; i++) {
             pads[i] = new RectF();
-            padColor[i] = Color.HSVToColor(new float[]{(300f + i * 27f) % 360f, 0.75f, 1f});
+            padColor[i] = PAD_808_COLORS[i % 4]; // TR-808 button colours
         }
         stroke.setStyle(Paint.Style.STROKE);
         text.setTextAlign(Paint.Align.CENTER);

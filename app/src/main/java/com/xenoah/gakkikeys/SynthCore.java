@@ -17,7 +17,7 @@ public final class SynthCore {
     public static final int KICK = 0, SNARE = 1, CLAP = 2, RIM = 3, CHAT = 4, OHAT = 5,
             CRASH = 6, COWBELL = 7, TOM_L = 8, TOM_M = 9, TOM_H = 10, BASS808 = 11;
     public static final String[] DRUM_NAMES = {"KICK", "SNARE", "CLAP", "RIM", "C.HAT", "O.HAT",
-            "CRASH", "COWBELL", "TOM L", "TOM M", "TOM H", "808"};
+            "CYMBAL", "COWBELL", "TOM L", "TOM M", "TOM H", "BOOM"};
 
     public static final String[] SYNTH_PRESETS = {"LEAD", "SQUARE", "PAD", "BASS"};
 
@@ -142,6 +142,8 @@ public final class SynthCore {
         float aux, auxDec;
         // SVF
         float ic1, ic2, a1, a2, a3, k;
+        // second SVF (808 hats / cymbal / clap tail)
+        float jc1, jc2, b1, b2, b3, k2;
         // one-pole states
         float hp1x, hp1y, hp2x, hp2y, lp1;
         int seed = 0x1234567;
@@ -212,6 +214,26 @@ public final class SynthCore {
         v.a1 = 1f / (1f + g * (g + v.k));
         v.a2 = g * v.a1;
         v.a3 = g * v.a2;
+    }
+
+    private void setSvf2(Voice v, float fc, float res) {
+        if (fc > sr * 0.45f) fc = sr * 0.45f;
+        float g = (float) Math.tan(Math.PI * fc / sr);
+        v.k2 = 2f - 2f * res;
+        v.b1 = 1f / (1f + g * (g + v.k2));
+        v.b2 = g * v.b1;
+        v.b3 = g * v.b2;
+    }
+
+    private static float svf2(Voice v, float x, int mode) {
+        float v3 = x - v.jc2;
+        float v1 = v.b1 * v.jc1 + v.b2 * v3;
+        float v2 = v.jc2 + v.b2 * v.jc1 + v.b3 * v3;
+        v.jc1 = 2 * v1 - v.jc1;
+        v.jc2 = 2 * v2 - v.jc2;
+        if (mode == 0) return v2;
+        if (mode == 1) return v1;
+        return x - v.k2 * v1 - v2;
     }
 
     /** mode 0 = LP, 1 = BP, 2 = HP */
@@ -312,6 +334,7 @@ public final class SynthCore {
         v.rel = 1f;
         v.relDec = 1f;
         v.ic1 = v.ic2 = 0;
+        v.jc1 = v.jc2 = 0;
         v.hp1x = v.hp1y = v.hp2x = v.hp2y = v.lp1 = 0;
         v.level = 0;
         v.stage = 0;
@@ -372,26 +395,25 @@ public final class SynthCore {
             if (v.sub == 6) setSvf(v, 3000, 0.4f);
             if (v.sub == 13) setSvf(v, 1800, 0.6f);
             if (v.sub == 17) setSvf(v, (float) (1800 * v.freq), 0.3f);
-        } else { // DRUM
+        } else { // DRUM — everything modelled on the Roland TR-808
             v.freq = 0;
-            v.send = 0.10f;
+            v.send = 0.08f;
             switch (v.sub) {
-                case KICK: v.maxT = (int) (sr * 0.9); v.send = 0.04f; break;
-                case SNARE: v.maxT = (int) (sr * 0.6); setSvf(v, 4500, 0.1f); break;
-                case CLAP: v.maxT = (int) (sr * 0.7); setSvf(v, 1300, 0.45f); v.send = 0.2f; break;
-                case RIM: v.maxT = (int) (sr * 0.15); setSvf(v, 2000, 0.6f); break;
-                case CHAT: v.maxT = (int) (sr * 0.25); setSvf(v, 7500, 0.2f); break;
-                case OHAT: v.maxT = (int) (sr * 1.6); setSvf(v, 7000, 0.2f); break;
-                case CRASH: v.maxT = (int) (sr * 3.5); setSvf(v, 5000, 0.1f); v.send = 0.25f; break;
-                case COWBELL: v.maxT = (int) (sr * 0.8); setSvf(v, 1700, 0.55f); break;
-                case TOM_L: case TOM_M: case TOM_H: v.maxT = (int) (sr * 1.0); v.send = 0.15f; break;
-                case BASS808: v.maxT = (int) (sr * 2.2); v.send = 0.03f; break;
+                case KICK: v.maxT = (int) (sr * 1.3); v.send = 0.03f; break;
+                case SNARE: v.maxT = (int) (sr * 0.6); setSvf(v, 1800, 0.15f); break;
+                case CLAP: v.maxT = (int) (sr * 0.8); setSvf(v, 1000, 0.5f); setSvf2(v, 1250, 0.4f); v.send = 0.22f; break;
+                case RIM: v.maxT = (int) (sr * 0.10); setSvf(v, 380, 0.1f); break;
+                case CHAT: v.maxT = (int) (sr * 0.25); setSvf(v, 8000, 0.35f); setSvf2(v, 6800, 0.1f); break;
+                case OHAT: v.maxT = (int) (sr * 1.8); setSvf(v, 8000, 0.35f); setSvf2(v, 6800, 0.1f); break;
+                case CRASH: v.maxT = (int) (sr * 3.5); setSvf(v, 3440, 0.35f); setSvf2(v, 7100, 0.1f); v.send = 0.22f; break;
+                case COWBELL: v.maxT = (int) (sr * 0.9); setSvf(v, 900, 0.45f); setSvf2(v, 400, 0.1f); break;
+                case TOM_L: case TOM_M: case TOM_H: v.maxT = (int) (sr * 1.2); setSvf(v, 1800, 0.1f); v.send = 0.12f; break;
+                case BASS808: v.maxT = (int) (sr * 3.0); v.send = 0.02f; break;
                 default: v.maxT = (int) (sr * 0.5);
             }
             if (v.sub == CHAT || v.sub == OHAT || v.sub == CRASH) {
-                double[] mf = {205.3, 304.4, 369.6, 522.7, 540.0, 800.0};
-                double mul = v.sub == CRASH ? 1.35 : 1.6;
-                for (int i = 0; i < 6; i++) v.pf[i] = mf[i] * mul / sr;
+                double[] mf = {205.3, 304.4, 369.6, 522.7, 540.0, 800.0}; // the 808's six metal oscillators
+                for (int i = 0; i < 6; i++) { v.pf[i] = mf[i] / sr; v.ph[i] = (i * 0.37) % 1.0; }
             }
             if (v.sub == COWBELL) { v.pf[0] = 540.0 / sr; v.pf[1] = 800.0 / sr; }
         }
@@ -631,10 +653,18 @@ public final class SynthCore {
         if (v.t > v.maxT) v.active = false;
     }
 
-    private float hp1(Voice v, float x, float a) {
-        v.hp1y = a * (v.hp1y + x - v.hp1x);
-        v.hp1x = x;
-        return v.hp1y;
+    private static float soft(float x, float drive) {
+        return (float) (Math.tanh(x * drive) / Math.tanh(drive));
+    }
+
+    private float metal(Voice v) {
+        float m = 0;
+        for (int k = 0; k < 6; k++) {
+            v.ph[k] += v.pf[k];
+            if (v.ph[k] >= 1) v.ph[k] -= 1;
+            m += v.ph[k] < 0.5 ? 1f : -1f;
+        }
+        return m * (1f / 6f);
     }
 
     private void renderDrum(Voice v, int frames) {
@@ -644,76 +674,80 @@ public final class SynthCore {
             float t = v.t * invSr;
             float s;
             switch (v.sub) {
-                case KICK: {
-                    double f = 46 + 120 * Math.exp(-t / 0.032);
+                case KICK: { // 808 bass drum: bridged-T sine, small pitch drop, trigger click
+                    double f = 52 * (1 + 0.55 * Math.exp(-t / 0.011));
                     v.ph[0] = wrap(v.ph[0] + f / sr);
-                    float body = sin(v.ph[0]) * (float) Math.exp(-t / 0.38);
-                    float click = noise(v) * (float) Math.exp(-t / 0.0015) * 0.35f;
-                    s = (body * 1.3f + click);
-                    s = s * 1.2f / (1f + Math.abs(s) * 0.3f);
+                    float body = sin(v.ph[0]) * (float) Math.exp(-t / 0.42);
+                    float click = (t < 0.0012f ? (float) Math.sin(Math.PI * t / 0.0012f) : 0f) * 0.5f;
+                    s = soft(body * 1.15f + click, 1.4f);
                     break;
                 }
-                case SNARE: {
-                    v.ph[0] = wrap(v.ph[0] + (185 + 40 * Math.exp(-t / 0.01)) / sr);
-                    v.ph[1] = wrap(v.ph[1] + 330.0 / sr);
-                    float tone = (sin(v.ph[0]) * 0.6f + sin(v.ph[1]) * 0.3f) * (float) Math.exp(-t / 0.07);
-                    float n = svf(v, noise(v), 2) * (float) Math.exp(-t / 0.16);
-                    s = tone * 0.8f + n * 0.75f;
+                case BASS808: { // long, saturated 808 boom
+                    double f = 46 * (1 + 0.9 * Math.exp(-t / 0.02));
+                    v.ph[0] = wrap(v.ph[0] + f / sr);
+                    float env = (float) Math.exp(-t / 1.1);
+                    s = soft(sin(v.ph[0]) * env * 1.2f, 2.2f) * Math.min(1f, env * 4f);
                     break;
                 }
-                case CLAP: {
-                    float env = 0;
-                    float[] starts = {0f, 0.011f, 0.022f, 0.031f};
-                    for (int k = 0; k < 3; k++) if (t >= starts[k] && t < starts[k + 1]) env = (float) Math.exp(-(t - starts[k]) / 0.004);
-                    if (t >= 0.031f) env = (float) Math.exp(-(t - 0.031f) / 0.13);
-                    s = svf(v, noise(v), 1) * env * 2.2f;
+                case SNARE: { // 238 Hz + 476 Hz bridged-T tones + high-passed "snappy" noise
+                    v.ph[0] = wrap(v.ph[0] + 238.0 * (1 + 0.04 * Math.exp(-t / 0.01)) / sr);
+                    v.ph[1] = wrap(v.ph[1] + 476.0 / sr);
+                    float tone = sin(v.ph[0]) * 0.7f * (float) Math.exp(-t / 0.10)
+                            + sin(v.ph[1]) * 0.45f * (float) Math.exp(-t / 0.055);
+                    float n = svf(v, noise(v), 2) * (float) Math.exp(-t / 0.15);
+                    s = tone + n * 0.65f;
                     break;
                 }
-                case RIM: {
-                    v.ph[0] = wrap(v.ph[0] + 1720.0 / sr);
-                    v.ph[1] = wrap(v.ph[1] + 470.0 / sr);
-                    float env = (float) Math.exp(-t / 0.011);
-                    s = (sin(v.ph[0]) * 0.6f + sin(v.ph[1]) * 0.5f) * env + svf(v, noise(v), 1) * env * 0.6f;
-                    break;
-                }
-                case CHAT: case OHAT: case CRASH: {
-                    float metal = 0;
-                    for (int k = 0; k < 6; k++) {
-                        v.ph[k] += v.pf[k];
-                        if (v.ph[k] >= 1) v.ph[k] -= 1;
-                        metal += v.ph[k] < 0.5 ? 1f : -1f;
+                case CLAP: { // 4 sawtooth-enveloped noise bursts + reverb tail
+                    float burst = 0;
+                    if (t < 0.036f) {
+                        float dt = t % 0.009f;
+                        burst = 1f - dt / 0.009f;
+                        burst *= burst;
                     }
-                    float src = metal * 0.12f + noise(v) * (v.sub == CRASH ? 0.9f : 0.6f);
-                    float hp = svf(v, src, 2);
-                    hp = hp1(v, hp, 0.8f);
-                    float tau = v.sub == CHAT ? 0.045f : (v.sub == OHAT ? 0.42f : 1.3f);
-                    float env = (float) Math.exp(-t / tau);
-                    if (v.sub == CRASH) env = env * 0.75f + (float) Math.exp(-t / 0.08) * 0.25f;
-                    s = hp * env * (v.sub == CRASH ? 0.9f : 0.75f);
+                    float tail = t >= 0.02f ? (float) Math.exp(-(t - 0.02f) / 0.17) * 0.55f : 0f;
+                    float n = noise(v);
+                    s = svf(v, n, 1) * burst * 2.4f + svf2(v, n, 1) * tail * 2.0f;
                     break;
                 }
-                case COWBELL: {
+                case RIM: { // 455 Hz + 1667 Hz, very short, high-passed and clipped
+                    v.ph[0] = wrap(v.ph[0] + 455.0 / sr);
+                    v.ph[1] = wrap(v.ph[1] + 1667.0 / sr);
+                    float env = (float) Math.exp(-t / 0.0075);
+                    float x = (sin(v.ph[0]) + sin(v.ph[1]) * 0.8f) * env;
+                    s = soft(svf(v, x, 2) * 2.2f, 2.5f) * 0.8f;
+                    break;
+                }
+                case CHAT: case OHAT: { // six square oscillators -> band-pass -> high-pass
+                    float x = svf2(v, svf(v, metal(v), 1), 2);
+                    float tau = v.sub == CHAT ? 0.042f : 0.38f;
+                    float env = (float) Math.exp(-t / tau) * Math.min(1f, t / 0.0008f);
+                    s = x * env * 5.5f;
+                    break;
+                }
+                case CRASH: { // 808 cymbal: low band (long) + high band (shorter)
+                    float m = metal(v);
+                    float lo = svf(v, m, 1) * (float) Math.exp(-t / 0.9) * 1.4f;
+                    float hi = svf2(v, m, 2) * (float) Math.exp(-t / 0.35) * 2.2f;
+                    s = (lo + hi) * Math.min(1f, t / 0.001f);
+                    break;
+                }
+                case COWBELL: { // 540 Hz + 800 Hz squares, band-passed, two-stage decay
                     float a = v.ph[0] < 0.5 ? 1f : -1f;
                     float b = v.ph[1] < 0.5 ? 1f : -1f;
                     v.ph[0] += v.pf[0]; if (v.ph[0] >= 1) v.ph[0] -= 1;
                     v.ph[1] += v.pf[1]; if (v.ph[1] >= 1) v.ph[1] -= 1;
-                    float env = (float) (Math.exp(-t / 0.02) * 0.6 + Math.exp(-t / 0.25) * 0.4);
-                    s = svf(v, (a + b) * 0.5f, 1) * env * 1.4f;
+                    float env = (float) (Math.exp(-t / 0.015) * 0.65 + Math.exp(-t / 0.28) * 0.35);
+                    s = svf2(v, svf(v, (a + b) * 0.5f, 1), 2) * env * 1.6f;
                     break;
                 }
-                case TOM_L: case TOM_M: case TOM_H: {
-                    double f0 = v.sub == TOM_L ? 92 : (v.sub == TOM_M ? 130 : 182);
-                    double f = f0 * (1 + 0.45 * Math.exp(-t / 0.06));
+                case TOM_L: case TOM_M: case TOM_H: { // sine with slight bend + a touch of filtered noise
+                    double f0 = v.sub == TOM_L ? 90 : (v.sub == TOM_M ? 130 : 190);
+                    double f = f0 * (1 + 0.18 * Math.exp(-t / 0.045));
                     v.ph[0] = wrap(v.ph[0] + f / sr);
-                    float tau = v.sub == TOM_L ? 0.42f : (v.sub == TOM_M ? 0.34f : 0.28f);
-                    s = sin(v.ph[0]) * (float) Math.exp(-t / tau) + noise(v) * (float) Math.exp(-t / 0.004) * 0.25f;
-                    break;
-                }
-                case BASS808: {
-                    double f = 49 * (1 + 1.2 * Math.exp(-t / 0.018));
-                    v.ph[0] = wrap(v.ph[0] + f / sr);
-                    float x = sin(v.ph[0]) * (float) Math.exp(-t / 0.9) * 1.6f;
-                    s = (float) Math.tanh(x);
+                    float tau = v.sub == TOM_L ? 0.50f : (v.sub == TOM_M ? 0.40f : 0.32f);
+                    s = sin(v.ph[0]) * (float) Math.exp(-t / tau)
+                            + svf(v, noise(v), 0) * (float) Math.exp(-t / 0.03) * 0.18f;
                     break;
                 }
                 default: s = 0;

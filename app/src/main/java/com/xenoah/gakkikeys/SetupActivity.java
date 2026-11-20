@@ -62,7 +62,7 @@ public final class SetupActivity extends Activity {
         how.setLineSpacing(0, 1.3f);
         how.setPadding(0, pad, 0, pad / 2);
         how.setText("③ 下の欄をタップして演奏\n\n"
-                + "・🥁 ドラム：12パッド。パッドの中心ほど強く鳴る\n"
+                + "・🥁 ドラム：TR-808風の12パッド。パッドの中心ほど強く鳴る\n"
                 + "・🎹 鍵盤：⚙の「音色」でピアノ / LEAD / SQUARE / PAD / BASS。「幅」で1〜3オクターブ（標準1オクターブ）。"
                 + "ピアノは手前ほど強く＆SUSでペダル、シンセは上下で明るさ・横スライドでポルタメント\n"
                 + "・⌨ 文字入力：ローマ字かな / ABC。キーごとにランダムな効果音（⚙「タイプ音」で音量、🎲で配置シャッフル）\n"
