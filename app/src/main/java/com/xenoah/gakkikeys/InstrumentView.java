@@ -3,6 +3,7 @@ package com.xenoah.gakkikeys;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Canvas;
+import android.graphics.Insets;
 import android.graphics.LinearGradient;
 import android.graphics.RadialGradient;
 import android.graphics.Paint;
@@ -16,6 +17,8 @@ import android.util.SparseArray;
 import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.WindowInsets;
+import android.os.Build;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -151,6 +154,10 @@ public final class InstrumentView extends View {
     private static final int PHONE_BG = 0xFF0B1F16;      // blackish green
     private static final int PHONE_ORANGE = 0xFFFF8A1E;
 
+    /** System bar insets (Android 15 edge-to-edge): content is kept clear of the navigation bar. */
+    private int insetL, insetR, insetB;
+    /** Content size (view size minus insets). */
+    private int cw, ch;
     private float barH;
     private final RectF body = new RectF();
     private boolean globeLongDone;
@@ -246,7 +253,34 @@ public final class InstrumentView extends View {
         int w = MeasureSpec.getSize(wSpec);
         DisplayMetrics dm = getResources().getDisplayMetrics();
         int h = (int) Math.min(290 * dp, dm.heightPixels * 0.48f);
-        setMeasuredDimension(w, h);
+        setMeasuredDimension(w, h + insetB);
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        requestApplyInsets();
+    }
+
+    @Override
+    public WindowInsets onApplyWindowInsets(WindowInsets in) {
+        int l = 0, r = 0, b = 0;
+        // Android 15+ (targetSdk 35) draws the IME window edge-to-edge under the navigation bar.
+        // Earlier versions already lay the keyboard out above it, so no padding is needed there.
+        if (Build.VERSION.SDK_INT >= 35) {
+            Insets i = Insets.max(
+                    Insets.max(in.getInsets(WindowInsets.Type.navigationBars()),
+                            in.getInsets(WindowInsets.Type.captionBar())),
+                    Insets.max(in.getInsets(WindowInsets.Type.tappableElement()),
+                            in.getInsets(WindowInsets.Type.displayCutout())));
+            l = i.left; r = i.right; b = i.bottom;
+        }
+        if (l != insetL || r != insetR || b != insetB) {
+            insetL = l; insetR = r; insetB = b;
+            requestLayout();
+            relayout();
+        }
+        return in;
     }
 
     @Override
@@ -255,8 +289,10 @@ public final class InstrumentView extends View {
     }
 
     private void relayout() {
-        int w = getWidth(), h = getHeight();
-        if (w == 0 || h == 0) return;
+        int w = getWidth() - insetL - insetR, h = getHeight() - insetB;
+        if (w <= 0 || h <= 0) return;
+        cw = w;
+        ch = h;
         barH = 44 * dp;
         body.set(0, barH, w, h);
         layoutBar();
@@ -314,7 +350,7 @@ public final class InstrumentView extends View {
         float total = 0;
         for (Btn b : bar) total += b.weight;
         float pad = 3 * dp, x = pad;
-        float unit = (getWidth() - pad * 2) / total;
+        float unit = (cw - pad * 2) / total;
         for (Btn b : bar) {
             b.r.set(x + pad * 0.5f, pad * 1.5f, x + b.weight * unit - pad * 0.5f, barH - pad * 1.5f);
             x += b.weight * unit;
@@ -501,7 +537,15 @@ public final class InstrumentView extends View {
     // ================================================================== drawing
     @Override
     protected void onDraw(Canvas c) {
-        c.drawColor(BG);
+        c.drawColor(BG); // also fills the strip behind the navigation bar
+        c.save();
+        c.translate(insetL, 0);
+        c.clipRect(0, 0, cw, ch);
+        drawContent(c);
+        c.restore();
+    }
+
+    private void drawContent(Canvas c) {
         drawBar(c);
         boolean animating = false;
         if (menuOpen) drawMenu(c);
@@ -550,7 +594,7 @@ public final class InstrumentView extends View {
     private void drawBar(Canvas c) {
         fill.setShader(null);
         fill.setColor(BAR_BG);
-        c.drawRect(0, 0, getWidth(), barH, fill);
+        c.drawRect(0, 0, cw, barH, fill);
         for (Btn b : bar) {
             boolean on = isOn(b);
             boolean tab = b.id <= B_TYPE || b.id == B_PHONE;
@@ -927,6 +971,15 @@ public final class InstrumentView extends View {
 
     @Override
     public boolean onTouchEvent(MotionEvent e) {
+        e.offsetLocation(-insetL, 0);
+        try {
+            return handleTouch(e);
+        } finally {
+            e.offsetLocation(insetL, 0);
+        }
+    }
+
+    private boolean handleTouch(MotionEvent e) {
         switch (e.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
             case MotionEvent.ACTION_POINTER_DOWN: {
@@ -951,6 +1004,7 @@ public final class InstrumentView extends View {
     }
 
     private void down(int id, float x, float y) {
+        if (y > ch || x < 0 || x > cw) return; // behind the navigation bar / side insets
         Touch t = new Touch();
         Btn b = hitBar(x, y);
         if (b != null) {
