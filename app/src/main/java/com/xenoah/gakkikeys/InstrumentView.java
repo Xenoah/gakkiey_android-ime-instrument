@@ -49,7 +49,7 @@ public final class InstrumentView extends View {
     /** Red / orange / yellow / cream, like the TR-808 step buttons. */
     private static final int[] PAD_808_COLORS = {0xFFE5452F, 0xFFF08A24, 0xFFF2CF3C, 0xFFEDE6D3};
 
-    private static final int MODE_DRUM = 0, MODE_KEYS = 1, MODE_TYPE = 3;
+    private static final int MODE_DRUM = 0, MODE_KEYS = 1, MODE_TYPE = 3, MODE_PHONE = 4;
     private static final int PAGE_LETTERS = 0, PAGE_NUM = 1, PAGE_SYM = 2;
 
     /** Sounds selectable for 🎹: 0 = piano, 1.. = synth presets. */
@@ -64,7 +64,7 @@ public final class InstrumentView extends View {
 
     // bar button ids
     private static final int B_DRUM = 1, B_KEYS = 2, B_TYPE = 3, B_OCT_DN = 4, B_OCT = 5, B_OCT_UP = 6,
-            B_SUS = 7, B_MENU = 8, B_TXT = 9, B_GLOBE = 10, B_HIDE = 11;
+            B_SUS = 7, B_MENU = 8, B_TXT = 9, B_GLOBE = 10, B_HIDE = 11, B_PHONE = 12;
 
     private static final class Btn {
         final int id;
@@ -93,7 +93,7 @@ public final class InstrumentView extends View {
     }
 
     private static final class Touch {
-        int type; // 1 note, 2 drum, 3 bar button, 4 typing key, 5 menu
+        int type; // 1 note, 2 drum, 3 bar button, 4 typing key, 5 menu, 6 phone key
         int midi;
         int voiceKey;
         int btn;
@@ -134,6 +134,14 @@ public final class InstrumentView extends View {
     private final int[] heldCount = new int[128];
     private TKey delKey;
 
+    // ☎ phone mode
+    private static final String[] PHONE_KEYS = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"};
+    private final RectF[] phoneRects = new RectF[12];
+    private final RectF phoneDisplay = new RectF();
+    private final RectF phoneDel = new RectF();
+    private final StringBuilder dialed = new StringBuilder();
+    private final int[] phoneHeld = new int[12];
+
     private float barH;
     private final RectF body = new RectF();
     private boolean globeLongDone;
@@ -173,7 +181,7 @@ public final class InstrumentView extends View {
         prefs = ctx.getSharedPreferences("gakki", Context.MODE_PRIVATE);
         mode = prefs.getInt("mode", MODE_KEYS);
         if (mode == 2) { mode = MODE_KEYS; sound = 1 + prefs.getInt("preset", 0); } // old SYNTH tab
-        if (mode != MODE_DRUM && mode != MODE_KEYS && mode != MODE_TYPE) mode = MODE_KEYS;
+        if (mode != MODE_DRUM && mode != MODE_KEYS && mode != MODE_TYPE && mode != MODE_PHONE) mode = MODE_KEYS;
         octave = prefs.getInt("octave", 4);
         sound = prefs.getInt("sound", sound);
         widthIdx = prefs.getInt("width", 0);
@@ -189,6 +197,7 @@ public final class InstrumentView extends View {
         seVolIdx = clamp(seVolIdx, 0, SE_VOL.length - 1);
         octave = clamp(octave, 1, maxOctave());
         for (int i = 0; i < 12; i++) {
+            phoneRects[i] = new RectF();
             pads[i] = new RectF();
             padColor[i] = PAD_808_COLORS[i % 4]; // TR-808 button colours
         }
@@ -239,15 +248,34 @@ public final class InstrumentView extends View {
         layoutPads();
         layoutKeys();
         layoutTyping();
+        layoutPhone();
         layoutMenu();
         invalidate();
     }
 
+    private void layoutPhone() {
+        float pad = 6 * dp;
+        float dispH = Math.min(46 * dp, body.height() * 0.2f);
+        phoneDisplay.set(pad, body.top + pad, body.width() - pad, body.top + pad + dispH);
+        phoneDel.set(phoneDisplay.right - dispH * 1.4f, phoneDisplay.top, phoneDisplay.right, phoneDisplay.bottom);
+        float top = phoneDisplay.bottom + pad;
+        // keep the keypad phone-shaped: limit width on wide screens
+        float kw = Math.min((body.width() - pad * 4) / 3f, 150 * dp);
+        float kh = (body.bottom - top - pad * 4) / 4f;
+        float left = (body.width() - (kw * 3 + pad * 2)) / 2f;
+        for (int i = 0; i < 12; i++) {
+            int r = i / 3, c = i % 3;
+            float x = left + c * (kw + pad), y = top + r * (kh + pad);
+            phoneRects[i].set(x, y, x + kw, y + kh);
+        }
+    }
+
     private void layoutBar() {
         bar.clear();
-        float tabW = mode == MODE_KEYS ? 1.05f : 1.5f;
+        float tabW = mode == MODE_KEYS ? 1.0f : 1.35f;
         bar.add(new Btn(B_DRUM, tabW));
         bar.add(new Btn(B_KEYS, tabW));
+        bar.add(new Btn(B_PHONE, tabW));
         bar.add(new Btn(B_TYPE, tabW));
         if (mode == MODE_KEYS) {
             bar.add(new Btn(B_OCT_DN, 0.75f));
@@ -455,6 +483,7 @@ public final class InstrumentView extends View {
         if (menuOpen) drawMenu(c);
         else if (mode == MODE_DRUM) animating = drawPads(c);
         else if (mode == MODE_TYPE) drawTyping(c);
+        else if (mode == MODE_PHONE) drawPhone(c);
         else drawKeys(c, !isPiano());
         if (animating) postInvalidateOnAnimation();
     }
@@ -468,6 +497,7 @@ public final class InstrumentView extends View {
             case B_DRUM: return "🥁";
             case B_KEYS: return "🎹";
             case B_TYPE: return "⌨";
+            case B_PHONE: return "☎";
             case B_OCT_DN: return "◀";
             case B_OCT: return "C" + octave;
             case B_OCT_UP: return "▶";
@@ -485,6 +515,7 @@ public final class InstrumentView extends View {
             case B_DRUM: return mode == MODE_DRUM;
             case B_KEYS: return mode == MODE_KEYS;
             case B_TYPE: return mode == MODE_TYPE;
+            case B_PHONE: return mode == MODE_PHONE;
             case B_SUS: return sustain;
             case B_TXT: return textOut;
             case B_MENU: return menuOpen;
@@ -498,7 +529,7 @@ public final class InstrumentView extends View {
         c.drawRect(0, 0, getWidth(), barH, fill);
         for (Btn b : bar) {
             boolean on = isOn(b);
-            boolean tab = b.id <= B_TYPE;
+            boolean tab = b.id <= B_TYPE || b.id == B_PHONE;
             if (b.id != B_OCT) {
                 fill.setColor(on ? (tab ? ACCENT : CYAN) : 0xFF232634);
                 c.drawRoundRect(b.r, 8 * dp, 8 * dp, fill);
@@ -674,6 +705,54 @@ public final class InstrumentView extends View {
         }
     }
 
+    private void drawPhone(Canvas c) {
+        float r = 10 * dp;
+        // display
+        fill.setShader(null);
+        fill.setColor(0xFF0A1A14);
+        c.drawRoundRect(phoneDisplay, r, r, fill);
+        stroke.setColor(0xFF1F5A44);
+        stroke.setStrokeWidth(1.2f * dp);
+        c.drawRoundRect(phoneDisplay, r, r, stroke);
+        String num = dialed.length() == 0 ? "☎ ダイヤル" : dialed.toString();
+        text.setTextAlign(Paint.Align.RIGHT);
+        text.setTypeface(Typeface.MONOSPACE);
+        text.setTextSize((dialed.length() == 0 ? 15 : 22) * dp);
+        text.setColor(dialed.length() == 0 ? 0xFF2F7A5C : 0xFF7CFFC4);
+        float maxW = phoneDel.left - phoneDisplay.left - 16 * dp;
+        while (text.measureText(num) > maxW && num.length() > 1) num = num.substring(1);
+        c.drawText(num, phoneDel.left - 8 * dp, phoneDisplay.centerY() - (text.descent() + text.ascent()) / 2, text);
+        text.setTextAlign(Paint.Align.CENTER);
+        text.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
+        text.setTextSize(18 * dp);
+        text.setColor(0xFF7CFFC4);
+        centerText(c, "⌫", phoneDel.centerX(), phoneDel.centerY());
+        // keypad
+        for (int i = 0; i < 12; i++) {
+            RectF k = phoneRects[i];
+            boolean down = phoneHeld[i] > 0;
+            fill.setColor(down ? 0xFF7CFFC4 : 0xFF2A2E3E);
+            c.drawRoundRect(k, r, r, fill);
+            if (!down) {
+                stroke.setColor(0xFF3C4258);
+                c.drawRoundRect(k, r, r, stroke);
+            }
+            String key = PHONE_KEYS[i];
+            int d = Character.isDigit(key.charAt(0)) ? key.charAt(0) - '0' : -1;
+            String sub = d >= 0 ? (d == 0 ? "+" : PHONE_SUB[d]) : "";
+            float big = Math.min(26 * dp, k.height() * 0.48f);
+            text.setTextSize(big);
+            text.setColor(down ? 0xFF0D0E14 : 0xFFF2F3F8);
+            float cy = k.centerY() - (sub.isEmpty() ? 0 : big * 0.22f);
+            centerText(c, key, k.centerX(), cy);
+            if (!sub.isEmpty()) {
+                text.setTextSize(Math.min(10 * dp, big * 0.42f));
+                text.setColor(down ? 0xFF0D0E14 : 0xFF8FA0B8);
+                centerText(c, sub, k.centerX(), cy + big * 0.62f);
+            }
+        }
+    }
+
     private Key keyFor(int midi) {
         for (Key k : keys) if (k.midi == midi) return k;
         return null;
@@ -802,6 +881,35 @@ public final class InstrumentView extends View {
             }
             return;
         }
+        if (mode == MODE_PHONE) {
+            if (phoneDel.contains(x, y) || (phoneDisplay.contains(x, y) && dialed.length() > 0)) {
+                if (phoneDel.contains(x, y)) {
+                    if (dialed.length() > 0) dialed.setLength(dialed.length() - 1);
+                    if (textOut) host.onTypeKey("DEL", false);
+                } else {
+                    dialed.setLength(0); // tap the display to clear
+                }
+                performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+                invalidate();
+                return;
+            }
+            for (int i = 0; i < 12; i++) {
+                if (!phoneRects[i].contains(x, y)) continue;
+                t.type = 6;
+                t.midi = i;
+                t.voiceKey = synth.newKey();
+                touches.put(id, t);
+                synth.dtmfOn(t.voiceKey, PHONE_KEYS[i].charAt(0), 1f);
+                phoneHeld[i]++;
+                if (dialed.length() > 40) dialed.delete(0, dialed.length() - 40);
+                dialed.append(PHONE_KEYS[i]);
+                if (textOut) host.onCommit(PHONE_KEYS[i]);
+                performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+                invalidate();
+                return;
+            }
+            return;
+        }
         if (mode == MODE_TYPE) {
             TKey k = hitTKey(x, y);
             if (k == null) return;
@@ -888,6 +996,10 @@ public final class InstrumentView extends View {
             synth.noteOff(t.voiceKey);
             heldCount[t.midi] = Math.max(0, heldCount[t.midi] - 1);
             invalidate();
+        } else if (t.type == 6) {
+            synth.noteOff(t.voiceKey);
+            phoneHeld[t.midi] = Math.max(0, phoneHeld[t.midi] - 1);
+            invalidate();
         } else if (t.type == 4) {
             if (t.voiceKey != 0) synth.noteOff(t.voiceKey);
             if (t.tkey != null && t.tkey == delKey) { removeCallbacks(delRepeat); delKey = null; }
@@ -946,6 +1058,7 @@ public final class InstrumentView extends View {
             case B_DRUM: setMode(MODE_DRUM); break;
             case B_KEYS: setMode(MODE_KEYS); break;
             case B_TYPE: setMode(MODE_TYPE); break;
+            case B_PHONE: setMode(MODE_PHONE); break;
             case B_OCT_DN: if (octave > 1) { octave--; releaseAll(); save(); relayout(); } break;
             case B_OCT_UP: if (octave < maxOctave()) { octave++; releaseAll(); save(); relayout(); } break;
             case B_SUS: sustain = !sustain; synth.setSustain(sustain); break;
@@ -993,12 +1106,13 @@ public final class InstrumentView extends View {
     public void releaseAll() {
         for (int i = 0; i < touches.size(); i++) {
             Touch t = touches.valueAt(i);
-            if ((t.type == 1 || t.type == 4) && t.voiceKey != 0) synth.noteOff(t.voiceKey);
+            if ((t.type == 1 || t.type == 4 || t.type == 6) && t.voiceKey != 0) synth.noteOff(t.voiceKey);
         }
         touches.clear();
         removeCallbacks(delRepeat);
         delKey = null;
         for (int i = 0; i < heldCount.length; i++) heldCount[i] = 0;
+        for (int i = 0; i < phoneHeld.length; i++) phoneHeld[i] = 0;
         if (sustain) { sustain = false; synth.setSustain(false); }
         invalidate();
     }
