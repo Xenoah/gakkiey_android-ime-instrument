@@ -15,9 +15,9 @@ public final class SynthCore {
 
     // Drum indices
     public static final int KICK = 0, SNARE = 1, CLAP = 2, RIM = 3, CHAT = 4, OHAT = 5,
-            CRASH = 6, COWBELL = 7, TOM_L = 8, TOM_M = 9, TOM_H = 10, BASS808 = 11;
+            CRASH = 6, COWBELL = 7, TOM_L = 8, TOM_M = 9, TOM_H = 10, BASS808 = 11, RIDE = 12;
     public static final String[] DRUM_NAMES = {"KICK", "SNARE", "CLAP", "RIM", "C.HAT", "O.HAT",
-            "CYMBAL", "COWBELL", "TOM L", "TOM M", "TOM H", "BOOM"};
+            "CYMBAL", "COWBELL", "TOM L", "TOM M", "TOM H", "BOOM", "RIDE"};
 
     public static final String[] SYNTH_PRESETS = {"LEAD", "SQUARE", "PAD", "BASS"};
 
@@ -260,7 +260,7 @@ public final class SynthCore {
                         for (Voice v : voices)
                             if (v.active && v.kind == DRUM && v.sub == OHAT) { v.released = true; v.relDec = decayCoef(0.015f); }
                     }
-                    if (e.sub == OHAT || e.sub == CRASH || e.sub == BASS808) { // retrigger same cymbal: fade previous
+                    if (e.sub == OHAT || e.sub == CRASH || e.sub == BASS808 || e.sub == RIDE) { // retrigger same cymbal: fade previous
                         for (Voice v : voices)
                             if (v.active && v.kind == DRUM && v.sub == e.sub) { v.released = true; v.relDec = decayCoef(0.03f); }
                     }
@@ -409,9 +409,10 @@ public final class SynthCore {
                 case COWBELL: v.maxT = (int) (sr * 0.9); setSvf(v, 900, 0.45f); setSvf2(v, 400, 0.1f); break;
                 case TOM_L: case TOM_M: case TOM_H: v.maxT = (int) (sr * 1.2); setSvf(v, 1800, 0.1f); v.send = 0.12f; break;
                 case BASS808: v.maxT = (int) (sr * 3.0); v.send = 0.02f; break;
+                case RIDE: v.maxT = (int) (sr * 4.5); setSvf(v, 4300, 0.45f); setSvf2(v, 9000, 0.2f); v.send = 0.2f; break;
                 default: v.maxT = (int) (sr * 0.5);
             }
-            if (v.sub == CHAT || v.sub == OHAT || v.sub == CRASH) {
+            if (v.sub == CHAT || v.sub == OHAT || v.sub == CRASH || v.sub == RIDE) {
                 double[] mf = {205.3, 304.4, 369.6, 522.7, 540.0, 800.0}; // the 808's six metal oscillators
                 for (int i = 0; i < 6; i++) { v.pf[i] = mf[i] / sr; v.ph[i] = (i * 0.37) % 1.0; }
             }
@@ -723,6 +724,13 @@ public final class SynthCore {
                     float tau = v.sub == CHAT ? 0.042f : 0.38f;
                     float env = (float) Math.exp(-t / tau) * Math.min(1f, t / 0.0008f);
                     s = x * env * 5.5f;
+                    break;
+                }
+                case RIDE: { // ride: narrow metallic wash (long) + stick "ping"
+                    float m = metal(v);
+                    float wash = svf(v, m, 1) * (float) Math.exp(-t / 1.6) * 1.1f;
+                    float ping = svf2(v, m, 2) * (float) Math.exp(-t / 0.06) * 2.4f;
+                    s = (wash + ping) * Math.min(1f, t / 0.0008f) * 0.85f;
                     break;
                 }
                 case CRASH: { // 808 cymbal: low band (long) + high band (shorter)

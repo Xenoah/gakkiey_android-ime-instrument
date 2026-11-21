@@ -43,24 +43,51 @@ public final class InstrumentView extends View {
 
     private static final String[] DO_RE_MI = {"ド", "ド#", "レ", "レ#", "ミ", "ファ", "ファ#", "ソ", "ソ#", "ラ", "ラ#", "シ"};
     private static final String[] NOTE = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-    private static final String[] DRUM_TEXT = {"ドン", "タン", "パン", "カッ", "ツ", "シャー", "ジャーン", "カン", "トン", "トン", "タン", "ブーン"};
+    private static final String[] DRUM_TEXT = {"ドン", "タン", "パン", "カッ", "ツ", "シャー", "ジャーン", "カン", "トン", "トン", "タン", "ブーン", "シーン"};
     /**
-     * Pad layouts (row-major 4x3, top row first) -> drum index.
-     * 0 標準: General-MIDI order filled bottom-up like an MPC / drum-rack (36 kick, 37 rim, 38 snare, 39 clap, ...).
-     * 1 ドラムセット: seen from the drummer's seat (hats left, snare centre, toms over, floor tom right).
-     * 2 旧: the earlier layout.
+     * Grid pad layouts (row-major 4x3, top row first) -> drum index.
+     * [0] GM order filled bottom-up like an MPC / drum-rack (36 kick, 37 rim, 38 snare, 39 clap, ...).
+     * [1] the earlier layout.
      */
     private static final int[][] PAD_LAYOUTS = {
             {SynthCore.TOM_H, SynthCore.CRASH, SynthCore.COWBELL, SynthCore.BASS808,
              SynthCore.TOM_L, SynthCore.CHAT, SynthCore.TOM_M, SynthCore.OHAT,
              SynthCore.KICK, SynthCore.RIM, SynthCore.SNARE, SynthCore.CLAP},
-            {SynthCore.CRASH, SynthCore.TOM_H, SynthCore.TOM_M, SynthCore.COWBELL,
-             SynthCore.OHAT, SynthCore.SNARE, SynthCore.RIM, SynthCore.TOM_L,
-             SynthCore.CHAT, SynthCore.KICK, SynthCore.CLAP, SynthCore.BASS808},
             {SynthCore.CRASH, SynthCore.OHAT, SynthCore.CHAT, SynthCore.COWBELL,
              SynthCore.TOM_H, SynthCore.TOM_M, SynthCore.TOM_L, SynthCore.BASS808,
              SynthCore.KICK, SynthCore.SNARE, SynthCore.CLAP, SynthCore.RIM}};
-    private static final String[] PAD_LAYOUT_NAMES = {"標準(GM)", "ドラムセット", "旧配置"};
+
+    /** Real drum kit, seen from above / from the drummer's seat. */
+    private static final int K_DRUM = 0, K_CYMBAL = 1, K_KICK = 2, K_PAD = 3, K_HIHAT = 4, K_BELL = 5;
+
+    private static final class KitPiece {
+        final int drum, alt, kind;
+        final float nx, ny, nr, altFrom;
+        final String label;
+        float cx, cy, r;
+        long flash;
+        KitPiece(int drum, int alt, float altFrom, int kind, float nx, float ny, float nr, String label) {
+            this.drum = drum; this.alt = alt; this.altFrom = altFrom; this.kind = kind;
+            this.nx = nx; this.ny = ny; this.nr = nr; this.label = label;
+        }
+    }
+
+    /** Drawn in this order (back to front); hit-tested front to back. */
+    private final KitPiece[] kit = {
+            new KitPiece(SynthCore.KICK, -1, 0, K_KICK, 0.52f, 0.90f, 0.20f, "KICK"),
+            new KitPiece(SynthCore.TOM_L, -1, 0, K_DRUM, 0.73f, 0.68f, 0.17f, "FLOOR"),
+            new KitPiece(SynthCore.SNARE, SynthCore.RIM, 0.80f, K_DRUM, 0.32f, 0.68f, 0.16f, "SNARE"),
+            new KitPiece(SynthCore.CHAT, SynthCore.OHAT, 0.58f, K_HIHAT, 0.11f, 0.66f, 0.15f, "HI-HAT"),
+            new KitPiece(SynthCore.TOM_H, -1, 0, K_DRUM, 0.40f, 0.30f, 0.13f, "TOM 1"),
+            new KitPiece(SynthCore.TOM_M, -1, 0, K_DRUM, 0.60f, 0.30f, 0.14f, "TOM 2"),
+            new KitPiece(SynthCore.CRASH, -1, 0, K_CYMBAL, 0.15f, 0.24f, 0.20f, "CRASH"),
+            new KitPiece(SynthCore.RIDE, -1, 0, K_CYMBAL, 0.86f, 0.27f, 0.20f, "RIDE"),
+            new KitPiece(SynthCore.COWBELL, -1, 0, K_BELL, 0.50f, 0.09f, 0.07f, "COW"),
+            new KitPiece(SynthCore.CLAP, -1, 0, K_PAD, 0.935f, 0.64f, 0.085f, "CLAP"),
+            new KitPiece(SynthCore.BASS808, -1, 0, K_PAD, 0.935f, 0.87f, 0.085f, "808"),
+    };
+
+    private static final String[] PAD_LAYOUT_NAMES = {"リアル", "パッド(GM)", "旧配置"};
     private static final String[] VEL_MODES = {"位置で強弱", "一定"};
     private static final String[] PHONE_VOLS = {"小", "中", "大"};
     private static final float[] PHONE_VOL = {0.45f, 0.75f, 1f};
@@ -224,7 +251,7 @@ public final class InstrumentView extends View {
         seVolIdx = prefs.getInt("seVol", 2);
         seSeed = prefs.getInt("seSeed", (int) System.nanoTime());
         dtmf = prefs.getBoolean("dtmf", true);
-        padLayout = clamp(prefs.getInt("padLayout", 0), 0, PAD_LAYOUTS.length - 1);
+        padLayout = clamp(prefs.getInt("drumLayout", 0), 0, PAD_LAYOUT_NAMES.length - 1);
         drumVelMode = clamp(prefs.getInt("drumVel", 0), 0, 1);
         phoneVolIdx = clamp(prefs.getInt("phoneVol", 2), 0, PHONE_VOLS.length - 1);
         textOut = prefs.getBoolean("text", false);
@@ -266,7 +293,7 @@ public final class InstrumentView extends View {
     private void save() {
         prefs.edit().putInt("mode", mode).putInt("octave", octave).putInt("sound", sound)
                 .putInt("width", widthIdx).putInt("labels", labelIdx).putInt("seVol", seVolIdx)
-                .putInt("seSeed", seSeed).putInt("padLayout", padLayout).putInt("drumVel", drumVelMode)
+                .putInt("seSeed", seSeed).putInt("drumLayout", padLayout).putInt("drumVel", drumVelMode)
                 .putInt("phoneVol", phoneVolIdx).putBoolean("dtmf", dtmf).putBoolean("text", textOut).apply();
     }
 
@@ -380,7 +407,17 @@ public final class InstrumentView extends View {
         }
     }
 
+    private void layoutKit() {
+        float unit = Math.min(body.height(), body.width() * 0.68f);
+        for (KitPiece k : kit) {
+            k.cx = body.left + k.nx * body.width();
+            k.cy = body.top + k.ny * body.height();
+            k.r = k.nr * unit;
+        }
+    }
+
     private void layoutPads() {
+        layoutKit();
         float gap = 5 * dp;
         float pw = (body.width() - gap * 5) / 4f;
         float ph = (body.height() - gap * 4) / 3f;
@@ -503,7 +540,11 @@ public final class InstrumentView extends View {
     private final RectF[] sectionTabs = {new RectF(), new RectF(), new RectF(), new RectF()};
 
     private int[] padMap() {
-        return PAD_LAYOUTS[padLayout];
+        return PAD_LAYOUTS[padLayout == 2 ? 1 : 0];
+    }
+
+    private boolean realKit() {
+        return padLayout == 0;
     }
 
     private int sectionForMode() {
@@ -620,7 +661,7 @@ public final class InstrumentView extends View {
         drawBar(c);
         boolean animating = false;
         if (menuOpen) drawMenu(c);
-        else if (mode == MODE_DRUM) animating = drawPads(c);
+        else if (mode == MODE_DRUM) animating = realKit() ? drawKit(c) : drawPads(c);
         else if (mode == MODE_TYPE) drawTyping(c);
         else if (mode == MODE_PHONE) animating = drawPhone(c);
         else drawKeys(c, !isPiano());
@@ -722,6 +763,113 @@ public final class InstrumentView extends View {
             text.setColor(sel ? 0xFF0D0E14 : 0xFFF2F3F8);
             centerText(c, s, o.r.centerX(), o.r.centerY());
         }
+    }
+
+    private void glow(Canvas c, float cx, float cy, float r, float a) {
+        fill.setShader(new RadialGradient(cx, cy, r,
+                new int[]{(int) (0xC8 * a) << 24 | 0xFF8A1E, (int) (0x60 * a) << 24 | 0xFF6A00, 0x00FF6A00},
+                new float[]{0.6f, 0.8f, 1f}, Shader.TileMode.CLAMP));
+        c.drawCircle(cx, cy, r, fill);
+        fill.setShader(null);
+    }
+
+    private void cymbal(Canvas c, KitPiece k, float f) {
+        float cx = k.cx, cy = k.cy, r = k.r;
+        int hi = blend(0xFFF0CF6A, 0xFFFFF0B0, f), lo = blend(0xFFA87A22, 0xFFE0A040, f);
+        fill.setShader(new RadialGradient(cx - r * 0.25f, cy - r * 0.3f, r * 1.3f, hi, lo, Shader.TileMode.CLAMP));
+        c.drawCircle(cx, cy, r, fill);
+        fill.setShader(null);
+        stroke.setStrokeWidth(0.8f * dp);
+        stroke.setColor(0x40000000);
+        for (float g = 0.30f; g < 0.98f; g += 0.085f) c.drawCircle(cx, cy, r * g, stroke);
+        stroke.setColor(0x66FFFFFF);
+        c.drawCircle(cx, cy, r - 0.6f * dp, stroke);
+        fill.setColor(blend(0xFFE6C463, 0xFFFFF4C0, f));
+        c.drawCircle(cx, cy, r * 0.2f, fill); // bell
+        fill.setColor(0xFF2A2420);
+        c.drawCircle(cx, cy, r * 0.045f, fill);
+    }
+
+    private boolean drawKit(Canvas c) {
+        long now = SystemClock.uptimeMillis();
+        boolean anim = false;
+        // floor rug
+        fill.setShader(new RadialGradient(body.centerX(), body.bottom, body.width() * 0.6f,
+                0xFF2A1A1E, BG, Shader.TileMode.CLAMP));
+        c.drawRect(body, fill);
+        fill.setShader(null);
+        for (KitPiece k : kit) {
+            float f = Math.max(0f, 1f - (now - k.flash) / 260f);
+            if (f > 0) { anim = true; glow(c, k.cx, k.cy, k.r * 1.35f, f); }
+            float cx = k.cx, cy = k.cy, r = k.r;
+            switch (k.kind) {
+                case K_CYMBAL:
+                    cymbal(c, k, f);
+                    break;
+                case K_HIHAT:
+                    cymbal(c, k, f);
+                    stroke.setColor(0x99000000);
+                    stroke.setStrokeWidth(1.2f * dp);
+                    stroke.setPathEffect(new android.graphics.DashPathEffect(new float[]{4 * dp, 3 * dp}, 0));
+                    c.drawCircle(cx, cy, r * k.altFrom, stroke);
+                    stroke.setPathEffect(null);
+                    break;
+                case K_BELL: {
+                    fill.setShader(new LinearGradient(cx, cy - r, cx, cy + r,
+                            blend(0xFF9AA0A8, 0xFFFFD08A, f), blend(0xFF4C5158, 0xFFFF7A00, f), Shader.TileMode.CLAMP));
+                    tmp.set(cx - r * 0.8f, cy - r, cx + r * 0.8f, cy + r);
+                    c.drawRoundRect(tmp, r * 0.35f, r * 0.35f, fill);
+                    fill.setShader(null);
+                    break;
+                }
+                case K_PAD: {
+                    tmp.set(cx - r, cy - r, cx + r, cy + r);
+                    fill.setColor(blend(0xFF1A1C26, PAD_808_COLORS[k.drum == SynthCore.CLAP ? 1 : 0], 0.25f + 0.75f * f));
+                    c.drawRoundRect(tmp, 8 * dp, 8 * dp, fill);
+                    stroke.setColor(PAD_808_COLORS[k.drum == SynthCore.CLAP ? 1 : 0]);
+                    stroke.setStrokeWidth(1.5f * dp);
+                    c.drawRoundRect(tmp, 8 * dp, 8 * dp, stroke);
+                    break;
+                }
+                default: { // drums (and kick): shell, hoop, head, lugs
+                    boolean kick = k.kind == K_KICK, snare = k.drum == SynthCore.SNARE;
+                    int shellHi = snare ? 0xFFD5D9DF : 0xFFB0303C, shellLo = snare ? 0xFF7D838C : 0xFF5E1219;
+                    fill.setShader(new LinearGradient(cx, cy - r, cx, cy + r, shellHi, shellLo, Shader.TileMode.CLAMP));
+                    c.drawCircle(cx, cy, r, fill);
+                    fill.setShader(null);
+                    stroke.setColor(0xFFC9CED5); // hoop
+                    stroke.setStrokeWidth(2f * dp);
+                    c.drawCircle(cx, cy, r * 0.90f, stroke);
+                    int headHi = kick ? 0xFF3A3A40 : 0xFFF2EEE3, headLo = kick ? 0xFF1C1C20 : 0xFFCFC8B6;
+                    fill.setShader(new RadialGradient(cx - r * 0.2f, cy - r * 0.25f, r,
+                            blend(headHi, 0xFFFFD08A, f), blend(headLo, 0xFFFF8A1E, f * 0.8f), Shader.TileMode.CLAMP));
+                    c.drawCircle(cx, cy, r * 0.86f, fill);
+                    fill.setShader(null);
+                    fill.setColor(0xFFDDE1E6);
+                    int lugs = kick ? 10 : 8;
+                    for (int i = 0; i < lugs; i++) {
+                        double a = Math.PI * 2 * i / lugs + Math.PI / lugs;
+                        c.drawCircle(cx + (float) Math.cos(a) * r * 0.95f, cy + (float) Math.sin(a) * r * 0.95f, 1.6f * dp, fill);
+                    }
+                    if (k.alt >= 0) { // rim zone marker
+                        stroke.setColor(0x55000000);
+                        stroke.setStrokeWidth(1f * dp);
+                        c.drawCircle(cx, cy, r * k.altFrom, stroke);
+                    }
+                }
+            }
+            // label
+            boolean dark = k.kind == K_KICK || k.kind == K_PAD || k.kind == K_BELL;
+            text.setTextSize(k.kind == K_HIHAT ? Math.max(8f * dp, r * 0.2f) : Math.max(9f * dp, Math.min(12f * dp, r * 0.32f)));
+            text.setColor(dark ? 0xFFEDEFF4 : 0xCC2A2420);
+            centerText(c, k.label, cx, cy + (k.kind == K_HIHAT ? r * 0.79f : k.kind == K_CYMBAL ? r * 0.45f : 0));
+            if (k.kind == K_HIHAT) {
+                text.setTextSize(Math.max(8f * dp, r * 0.2f));
+                centerText(c, "閉", cx, cy - r * 0.02f);
+                centerText(c, "開", cx, cy - r * 0.78f);
+            }
+        }
+        return anim;
     }
 
     private boolean drawPads(Canvas c) {
@@ -1185,6 +1333,28 @@ public final class InstrumentView extends View {
                 playSE(k.code);
             }
             pressTKey(k);
+            return;
+        }
+        if (mode == MODE_DRUM && realKit()) {
+            for (int i = kit.length - 1; i >= 0; i--) {
+                KitPiece k = kit[i];
+                float dx = x - k.cx, dy = y - k.cy;
+                boolean in = k.kind == K_PAD || k.kind == K_BELL
+                        ? Math.abs(dx) <= k.r && Math.abs(dy) <= k.r
+                        : dx * dx + dy * dy <= k.r * k.r;
+                if (!in) continue;
+                float d = (float) Math.sqrt(dx * dx + dy * dy) / k.r;
+                int drum = (k.alt >= 0 && d >= k.altFrom) ? k.alt : k.drum;
+                float vel = drumVelMode == 1 ? 1f : 1f - 0.35f * Math.min(1f, d);
+                synth.drum(drum, vel);
+                k.flash = SystemClock.uptimeMillis();
+                t.type = 2;
+                touches.put(id, t);
+                performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+                if (textOut) host.onCommit(DRUM_TEXT[drum]);
+                invalidate();
+                return;
+            }
             return;
         }
         if (mode == MODE_DRUM) {
