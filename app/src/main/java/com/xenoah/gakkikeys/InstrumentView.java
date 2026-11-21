@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Canvas;
 import android.graphics.LinearGradient;
+import android.graphics.RadialGradient;
 import android.graphics.Paint;
 import android.graphics.RectF;
 import android.graphics.Shader;
@@ -141,6 +142,10 @@ public final class InstrumentView extends View {
     private final RectF phoneDel = new RectF();
     private final StringBuilder dialed = new StringBuilder();
     private final int[] phoneHeld = new int[12];
+    private final long[] phoneLit = new long[12];
+    private Typeface rounded;
+    private static final int PHONE_BG = 0xFF0B1F16;      // blackish green
+    private static final int PHONE_ORANGE = 0xFFFF8A1E;
 
     private float barH;
     private final RectF body = new RectF();
@@ -201,6 +206,12 @@ public final class InstrumentView extends View {
             pads[i] = new RectF();
             padColor[i] = PAD_808_COLORS[i % 4]; // TR-808 button colours
         }
+        try {
+            int fid = ctx.getResources().getIdentifier("mplus_rounded_bold", "font", ctx.getPackageName());
+            if (fid != 0) rounded = ctx.getResources().getFont(fid);
+        } catch (Exception ignored) {
+        }
+        if (rounded == null) rounded = Typeface.create("sans-serif", Typeface.BOLD);
         stroke.setStyle(Paint.Style.STROKE);
         text.setTextAlign(Paint.Align.CENTER);
         text.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
@@ -254,18 +265,17 @@ public final class InstrumentView extends View {
     }
 
     private void layoutPhone() {
-        float pad = 6 * dp;
-        float dispH = Math.min(46 * dp, body.height() * 0.2f);
-        phoneDisplay.set(pad, body.top + pad, body.width() - pad, body.top + pad + dispH);
-        phoneDel.set(phoneDisplay.right - dispH * 1.4f, phoneDisplay.top, phoneDisplay.right, phoneDisplay.bottom);
-        float top = phoneDisplay.bottom + pad;
-        // keep the keypad phone-shaped: limit width on wide screens
-        float kw = Math.min((body.width() - pad * 4) / 3f, 150 * dp);
-        float kh = (body.bottom - top - pad * 4) / 4f;
-        float left = (body.width() - (kw * 3 + pad * 2)) / 2f;
+        float pad = 5 * dp;
+        float dispH = Math.min(36 * dp, body.height() * 0.16f);
+        phoneDisplay.set(pad * 2, body.top + pad, body.width() - pad * 2, body.top + pad + dispH);
+        phoneDel.set(phoneDisplay.right - dispH * 1.5f, phoneDisplay.top, phoneDisplay.right, phoneDisplay.bottom);
+        float top = phoneDisplay.bottom + pad * 0.6f;
+        float kh = (body.bottom - top - pad * 0.6f) / 4f;
+        float kw = Math.min(body.width() / 3f, kh * 2.2f);
+        float left = (body.width() - kw * 3) / 2f;
         for (int i = 0; i < 12; i++) {
             int r = i / 3, c = i % 3;
-            float x = left + c * (kw + pad), y = top + r * (kh + pad);
+            float x = left + c * kw, y = top + r * kh;
             phoneRects[i].set(x, y, x + kw, y + kh);
         }
     }
@@ -483,7 +493,7 @@ public final class InstrumentView extends View {
         if (menuOpen) drawMenu(c);
         else if (mode == MODE_DRUM) animating = drawPads(c);
         else if (mode == MODE_TYPE) drawTyping(c);
-        else if (mode == MODE_PHONE) drawPhone(c);
+        else if (mode == MODE_PHONE) animating = drawPhone(c);
         else drawKeys(c, !isPiano());
         if (animating) postInvalidateOnAnimation();
     }
@@ -705,52 +715,84 @@ public final class InstrumentView extends View {
         }
     }
 
-    private void drawPhone(Canvas c) {
-        float r = 10 * dp;
-        // display
+    /** ☎: silver round buttons, black rounded digits, orange glow when pressed, dark-green body. */
+    private boolean drawPhone(Canvas c) {
+        long now = SystemClock.uptimeMillis();
+        boolean anim = false;
         fill.setShader(null);
-        fill.setColor(0xFF0A1A14);
+        fill.setColor(PHONE_BG);
+        c.drawRect(body, fill);
+
+        // number display (dark LCD)
+        float r = 10 * dp;
+        fill.setColor(0xFF05120C);
         c.drawRoundRect(phoneDisplay, r, r, fill);
-        stroke.setColor(0xFF1F5A44);
+        stroke.setColor(0xFF1E4A36);
         stroke.setStrokeWidth(1.2f * dp);
         c.drawRoundRect(phoneDisplay, r, r, stroke);
-        String num = dialed.length() == 0 ? "☎ ダイヤル" : dialed.toString();
+        String num = dialed.length() == 0 ? "☎" : dialed.toString();
         text.setTextAlign(Paint.Align.RIGHT);
-        text.setTypeface(Typeface.MONOSPACE);
-        text.setTextSize((dialed.length() == 0 ? 15 : 22) * dp);
-        text.setColor(dialed.length() == 0 ? 0xFF2F7A5C : 0xFF7CFFC4);
+        text.setTypeface(rounded);
+        text.setTextSize(24 * dp);
+        text.setColor(dialed.length() == 0 ? 0xFF2C6B50 : PHONE_ORANGE);
         float maxW = phoneDel.left - phoneDisplay.left - 16 * dp;
         while (text.measureText(num) > maxW && num.length() > 1) num = num.substring(1);
         c.drawText(num, phoneDel.left - 8 * dp, phoneDisplay.centerY() - (text.descent() + text.ascent()) / 2, text);
         text.setTextAlign(Paint.Align.CENTER);
         text.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
         text.setTextSize(18 * dp);
-        text.setColor(0xFF7CFFC4);
+        text.setColor(0xFFB9C2BD);
         centerText(c, "⌫", phoneDel.centerX(), phoneDel.centerY());
-        // keypad
+
         for (int i = 0; i < 12; i++) {
             RectF k = phoneRects[i];
+            float cx = k.centerX(), cy = k.centerY();
+            float rad = Math.min(k.width(), k.height()) / 2f - 2 * dp;
             boolean down = phoneHeld[i] > 0;
-            fill.setColor(down ? 0xFF7CFFC4 : 0xFF2A2E3E);
-            c.drawRoundRect(k, r, r, fill);
-            if (!down) {
-                stroke.setColor(0xFF3C4258);
-                c.drawRoundRect(k, r, r, stroke);
+            // glow: full while held, fades out ~250 ms after release
+            float glow = down ? 1f : Math.max(0f, 1f - (now - phoneLit[i]) / 250f);
+            if (glow > 0 && !down) anim = true;
+            if (glow > 0) {
+                fill.setShader(new RadialGradient(cx, cy, rad * 1.45f,
+                        new int[]{(int) (0xC0 * glow) << 24 | 0xFF8A1E, (int) (0x60 * glow) << 24 | 0xFF6A00, 0x00FF6A00},
+                        new float[]{0.55f, 0.75f, 1f}, Shader.TileMode.CLAMP));
+                c.drawCircle(cx, cy, rad * 1.45f, fill);
             }
+            // drop shadow
+            fill.setShader(null);
+            fill.setColor(0x66000000);
+            c.drawCircle(cx, cy + 2.5f * dp, rad, fill);
+            // silver body (or orange when lit)
+            int top = down ? 0xFFFFD08A : blend(0xFFF4F5F7, 0xFFFFD08A, glow);
+            int bottom = down ? 0xFFFF7A00 : blend(0xFF8E949C, 0xFFFF7A00, glow);
+            fill.setShader(new LinearGradient(cx, cy - rad, cx, cy + rad, top, bottom, Shader.TileMode.CLAMP));
+            c.drawCircle(cx, cy, rad, fill);
+            fill.setShader(null);
+            // brushed-metal rim + inner highlight
+            stroke.setStrokeWidth(1.6f * dp);
+            stroke.setShader(new LinearGradient(cx, cy - rad, cx, cy + rad, 0xFFFFFFFF, 0xFF5D636B, Shader.TileMode.CLAMP));
+            c.drawCircle(cx, cy, rad - 0.8f * dp, stroke);
+            stroke.setShader(null);
+            fill.setColor(down ? 0x33FFFFFF : 0x55FFFFFF);
+            c.drawOval(cx - rad * 0.62f, cy - rad * 0.86f, cx + rad * 0.62f, cy - rad * 0.30f, fill);
+            // black rounded label
             String key = PHONE_KEYS[i];
             int d = Character.isDigit(key.charAt(0)) ? key.charAt(0) - '0' : -1;
             String sub = d >= 0 ? (d == 0 ? "+" : PHONE_SUB[d]) : "";
-            float big = Math.min(26 * dp, k.height() * 0.48f);
+            text.setTypeface(rounded);
+            float big = rad * 0.95f;
             text.setTextSize(big);
-            text.setColor(down ? 0xFF0D0E14 : 0xFFF2F3F8);
-            float cy = k.centerY() - (sub.isEmpty() ? 0 : big * 0.22f);
-            centerText(c, key, k.centerX(), cy);
+            text.setColor(0xFF111111);
+            float ty = cy - (sub.isEmpty() ? 0 : rad * 0.16f);
+            centerText(c, key, cx, ty);
             if (!sub.isEmpty()) {
-                text.setTextSize(Math.min(10 * dp, big * 0.42f));
-                text.setColor(down ? 0xFF0D0E14 : 0xFF8FA0B8);
-                centerText(c, sub, k.centerX(), cy + big * 0.62f);
+                text.setTextSize(rad * 0.30f);
+                text.setColor(0xFF2A2A2A);
+                centerText(c, sub, cx, ty + rad * 0.58f);
             }
         }
+        text.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
+        return anim;
     }
 
     private Key keyFor(int midi) {
@@ -998,6 +1040,7 @@ public final class InstrumentView extends View {
             invalidate();
         } else if (t.type == 6) {
             synth.noteOff(t.voiceKey);
+            phoneLit[t.midi] = SystemClock.uptimeMillis();
             phoneHeld[t.midi] = Math.max(0, phoneHeld[t.midi] - 1);
             invalidate();
         } else if (t.type == 4) {

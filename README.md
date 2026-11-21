@@ -17,7 +17,7 @@ Androidのキーボード（IME）がそのまま楽器になります。🥁ド
 |---|---|
 | 🥁 ドラム | TR-808風で統一（KICK / SNARE / CLAP / RIM / C.HAT / O.HAT / CYMBAL / COWBELL / TOM L・M・H / BOOM＝ロング808キック）。ハット・シンバルは808と同じ6本の矩形波メタル音源。中心ほど強い。C.HATでO.HATがチョーク |
 | 🎹 鍵盤 | ⚙で音色（ピアノ / LEAD / SQUARE / PAD / BASS）と幅（1 / 1.5 / 2 / 3オクターブ、標準1）。ピアノ=手前ほど強い・スライドでグリッサンド・SUSでペダル。シンセ=縦で明るさ・横スライドでポルタメント |
-| ☎ 電話機 | 電話型3×4キー（1〜9・＊・0・＃）。押している間DTMF（プッシュ音）が鳴る。上の表示に押した番号、⌫で1文字消去、表示タップでクリア。「あ」ONで数字を入力欄にも入力 |
+| ☎ 電話機 | 1 2 3 / 4 5 6 / 7 8 9 / ＊ 0 ＃ の銀色丸ボタン（黒の丸文字）、背景は黒めの緑。押している間DTMF（プッシュ音）が鳴り、ボタンがオレンジに光る。上の表示に押した番号、⌫で1文字消去、表示タップでクリア。「あ」ONで数字を入力欄にも入力 |
 | ⌨ 文字入力 | QWERTY。ローマ字かな(あ) / 英字(A)。キーごとにランダムな効果音（18種×音程）。123 = 電話型テンキーでDTMF、#+= = 記号 |
 
 ### ⚙ メニュー
@@ -39,3 +39,6 @@ Androidのキーボード（IME）がそのまま楽器になります。🥁ド
 - `InstrumentView.java` – 描画とマルチタッチ
 - `GakkiIME.java` – InputMethodService
 - `SetupActivity.java` – 有効化ガイド＋試し弾き欄
+
+## ライセンス
+- 電話機ボタンの数字フォント: M PLUS Rounded 1c (Copyright 2016 The Rounded M+ Project Authors) — SIL Open Font License 1.1。数字と英字のみにサブセット化して同梱（`licenses/OFL-MPLUSRounded1c.txt`）。
