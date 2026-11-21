@@ -44,11 +44,26 @@ public final class InstrumentView extends View {
     private static final String[] DO_RE_MI = {"ド", "ド#", "レ", "レ#", "ミ", "ファ", "ファ#", "ソ", "ソ#", "ラ", "ラ#", "シ"};
     private static final String[] NOTE = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
     private static final String[] DRUM_TEXT = {"ドン", "タン", "パン", "カッ", "ツ", "シャー", "ジャーン", "カン", "トン", "トン", "タン", "ブーン"};
-    /** Pad layout (row-major, 4x3) -> drum index. Bottom row = kick/snare like an MPC. */
-    private static final int[] PAD_MAP = {
-            SynthCore.CRASH, SynthCore.OHAT, SynthCore.CHAT, SynthCore.COWBELL,
-            SynthCore.TOM_H, SynthCore.TOM_M, SynthCore.TOM_L, SynthCore.BASS808,
-            SynthCore.KICK, SynthCore.SNARE, SynthCore.CLAP, SynthCore.RIM};
+    /**
+     * Pad layouts (row-major 4x3, top row first) -> drum index.
+     * 0 標準: General-MIDI order filled bottom-up like an MPC / drum-rack (36 kick, 37 rim, 38 snare, 39 clap, ...).
+     * 1 ドラムセット: seen from the drummer's seat (hats left, snare centre, toms over, floor tom right).
+     * 2 旧: the earlier layout.
+     */
+    private static final int[][] PAD_LAYOUTS = {
+            {SynthCore.TOM_H, SynthCore.CRASH, SynthCore.COWBELL, SynthCore.BASS808,
+             SynthCore.TOM_L, SynthCore.CHAT, SynthCore.TOM_M, SynthCore.OHAT,
+             SynthCore.KICK, SynthCore.RIM, SynthCore.SNARE, SynthCore.CLAP},
+            {SynthCore.CRASH, SynthCore.TOM_H, SynthCore.TOM_M, SynthCore.COWBELL,
+             SynthCore.OHAT, SynthCore.SNARE, SynthCore.RIM, SynthCore.TOM_L,
+             SynthCore.CHAT, SynthCore.KICK, SynthCore.CLAP, SynthCore.BASS808},
+            {SynthCore.CRASH, SynthCore.OHAT, SynthCore.CHAT, SynthCore.COWBELL,
+             SynthCore.TOM_H, SynthCore.TOM_M, SynthCore.TOM_L, SynthCore.BASS808,
+             SynthCore.KICK, SynthCore.SNARE, SynthCore.CLAP, SynthCore.RIM}};
+    private static final String[] PAD_LAYOUT_NAMES = {"標準(GM)", "ドラムセット", "旧配置"};
+    private static final String[] VEL_MODES = {"位置で強弱", "一定"};
+    private static final String[] PHONE_VOLS = {"小", "中", "大"};
+    private static final float[] PHONE_VOL = {0.45f, 0.75f, 1f};
 
     /** Red / orange / yellow / cream, like the TR-808 step buttons. */
     private static final int[] PAD_808_COLORS = {0xFFE5452F, 0xFFF08A24, 0xFFF2CF3C, 0xFFEDE6D3};
@@ -121,6 +136,10 @@ public final class InstrumentView extends View {
     private boolean sustain;
     private boolean textOut;
     private boolean menuOpen;
+    private int menuSection;   // 0 drum, 1 keys, 2 phone, 3 typing
+    private int padLayout;
+    private int drumVelMode;
+    private int phoneVolIdx;
 
     private boolean kanaLang = true;
     private int page = PAGE_LETTERS;
@@ -205,6 +224,9 @@ public final class InstrumentView extends View {
         seVolIdx = prefs.getInt("seVol", 2);
         seSeed = prefs.getInt("seSeed", (int) System.nanoTime());
         dtmf = prefs.getBoolean("dtmf", true);
+        padLayout = clamp(prefs.getInt("padLayout", 0), 0, PAD_LAYOUTS.length - 1);
+        drumVelMode = clamp(prefs.getInt("drumVel", 0), 0, 1);
+        phoneVolIdx = clamp(prefs.getInt("phoneVol", 2), 0, PHONE_VOLS.length - 1);
         textOut = prefs.getBoolean("text", false);
         kanaLang = prefs.getBoolean("kana", true);
         sound = clamp(sound, 0, SOUNDS.length - 1);
@@ -244,7 +266,8 @@ public final class InstrumentView extends View {
     private void save() {
         prefs.edit().putInt("mode", mode).putInt("octave", octave).putInt("sound", sound)
                 .putInt("width", widthIdx).putInt("labels", labelIdx).putInt("seVol", seVolIdx)
-                .putInt("seSeed", seSeed).putBoolean("dtmf", dtmf).putBoolean("text", textOut).apply();
+                .putInt("seSeed", seSeed).putInt("padLayout", padLayout).putInt("drumVel", drumVelMode)
+                .putInt("phoneVol", phoneVolIdx).putBoolean("dtmf", dtmf).putBoolean("text", textOut).apply();
     }
 
     // ================================================================== layout
@@ -467,41 +490,80 @@ public final class InstrumentView extends View {
                     new float[]{1.3f, 1.1f, 1f, 3.7f, 1f, 1.9f}, y0 + rowH * 3, rowH);
     }
 
-    // ------------------------------------------------------------------ menu layout
-    private static final String[] MENU_ROWS = {"音色", "幅", "表示", "タイプ音", "DTMF"};
+    // ------------------------------------------------------------------ menu (sectioned per tab)
+    private static final String[] SECTION_NAMES = {"🥁 ドラム", "🎹 鍵盤", "☎ 電話機", "⌨ 文字入力"};
+    private static final int R_PAD_LAYOUT = 0, R_DRUM_VEL = 1, R_SOUND = 2, R_WIDTH = 3, R_LABEL = 4,
+            R_PHONE_VOL = 5, R_SE = 6, R_DTMF = 7;
+    private static final String[] ROW_LABELS = {"配置", "強弱", "音色", "幅", "表示", "音量", "タイプ音", "テンキー音"};
+    private static final int[][] SECTION_ROWS = {
+            {R_PAD_LAYOUT, R_DRUM_VEL},
+            {R_SOUND, R_WIDTH, R_LABEL},
+            {R_PHONE_VOL},
+            {R_SE, R_DTMF}};
+    private final RectF[] sectionTabs = {new RectF(), new RectF(), new RectF(), new RectF()};
+
+    private int[] padMap() {
+        return PAD_LAYOUTS[padLayout];
+    }
+
+    private int sectionForMode() {
+        switch (mode) {
+            case MODE_DRUM: return 0;
+            case MODE_PHONE: return 2;
+            case MODE_TYPE: return 3;
+            default: return 1;
+        }
+    }
 
     private String[] menuOptions(int row) {
         switch (row) {
-            case 0: return SOUNDS;
-            case 1: return WIDTHS;
-            case 2: return LABELS;
-            case 3: return SE_VOLS;
+            case R_PAD_LAYOUT: return PAD_LAYOUT_NAMES;
+            case R_DRUM_VEL: return VEL_MODES;
+            case R_SOUND: return SOUNDS;
+            case R_WIDTH: return WIDTHS;
+            case R_LABEL: return LABELS;
+            case R_PHONE_VOL: return PHONE_VOLS;
+            case R_SE: return SE_VOLS;
             default: return ONOFF;
         }
     }
 
     private int menuSelected(int row) {
         switch (row) {
-            case 0: return sound;
-            case 1: return widthIdx;
-            case 2: return labelIdx;
-            case 3: return seVolIdx;
+            case R_PAD_LAYOUT: return padLayout;
+            case R_DRUM_VEL: return drumVelMode;
+            case R_SOUND: return sound;
+            case R_WIDTH: return widthIdx;
+            case R_LABEL: return labelIdx;
+            case R_PHONE_VOL: return phoneVolIdx;
+            case R_SE: return seVolIdx;
             default: return dtmf ? 0 : 1;
         }
+    }
+
+    private float sectionTabH() {
+        return Math.min(38 * dp, body.height() * 0.17f);
     }
 
     private void layoutMenu() {
         opts.clear();
         float pad = 6 * dp;
-        float labelW = 64 * dp;
-        float rowH = (body.height() - pad * 2) / MENU_ROWS.length;
-        for (int r = 0; r < MENU_ROWS.length; r++) {
-            String[] o = menuOptions(r);
-            float top = body.top + pad + r * rowH;
-            float x0 = labelW, w = (body.width() - labelW - pad) / o.length;
+        float tabH = sectionTabH();
+        float tw = (body.width() - pad * 2) / 4f;
+        for (int i = 0; i < 4; i++)
+            sectionTabs[i].set(body.left + pad + i * tw + 2 * dp, body.top + pad,
+                    body.left + pad + (i + 1) * tw - 2 * dp, body.top + pad + tabH);
+        int[] rows = SECTION_ROWS[menuSection];
+        float top0 = body.top + pad + tabH + pad * 1.5f;
+        float rowH = Math.min(62 * dp, (body.bottom - top0 - pad) / 3f);
+        float labelW = 72 * dp;
+        for (int r = 0; r < rows.length; r++) {
+            String[] o = menuOptions(rows[r]);
+            float top = top0 + r * rowH;
+            float x0 = body.left + labelW, w = (body.width() - labelW - pad) / o.length;
             for (int i = 0; i < o.length; i++) {
-                Opt op = new Opt(r, i);
-                op.r.set(x0 + i * w + 2 * dp, top + 3 * dp, x0 + (i + 1) * w - 2 * dp, top + rowH - 3 * dp);
+                Opt op = new Opt(rows[r], i);
+                op.r.set(x0 + i * w + 2 * dp, top + 5 * dp, x0 + (i + 1) * w - 2 * dp, top + rowH - 5 * dp);
                 opts.add(op);
             }
         }
@@ -509,16 +571,25 @@ public final class InstrumentView extends View {
 
     private void pressOpt(Opt o) {
         switch (o.row) {
-            case 0:
+            case R_PAD_LAYOUT: padLayout = o.idx; break;
+            case R_DRUM_VEL: drumVelMode = o.idx; break;
+            case R_SOUND:
                 if (o.idx != sound) { releaseAll(); sound = o.idx; }
                 break;
-            case 1:
+            case R_WIDTH:
                 releaseAll();
                 widthIdx = o.idx;
                 octave = clamp(octave, 1, maxOctave());
                 break;
-            case 2: labelIdx = o.idx; break;
-            case 3:
+            case R_LABEL: labelIdx = o.idx; break;
+            case R_PHONE_VOL: {
+                phoneVolIdx = o.idx;
+                int k = synth.newKey(); // preview
+                synth.dtmfOn(k, '5', PHONE_VOL[phoneVolIdx]);
+                postDelayed(() -> synth.noteOff(k), 150);
+                break;
+            }
+            case R_SE:
                 if (o.idx == SE_VOLS.length - 1) { // 🎲 reshuffle
                     seSeed = new Random().nextInt();
                     if (seVolIdx == 0) seVolIdx = 2;
@@ -528,7 +599,7 @@ public final class InstrumentView extends View {
                     if (seVolIdx > 0) synth.se(seFor("a"), seRatio("a"), SE_VOL[seVolIdx]);
                 }
                 break;
-            case 4: dtmf = o.idx == 0; break;
+            case R_DTMF: dtmf = o.idx == 0; break;
         }
         save();
         relayout();
@@ -610,20 +681,44 @@ public final class InstrumentView extends View {
 
     private void drawMenu(Canvas c) {
         float pad = 6 * dp;
-        float rowH = (body.height() - pad * 2) / MENU_ROWS.length;
-        text.setTextSize(12.5f * dp);
-        for (int r = 0; r < MENU_ROWS.length; r++) {
+        // section tabs
+        for (int i = 0; i < 4; i++) {
+            boolean on = i == menuSection;
+            fill.setShader(null);
+            fill.setColor(on ? ACCENT : 0xFF232634);
+            c.drawRoundRect(sectionTabs[i], 8 * dp, 8 * dp, fill);
+            text.setTextSize(12.5f * dp);
+            text.setColor(on ? 0xFF0D0E14 : 0xFFDDE0EA);
+            centerText(c, SECTION_NAMES[i], sectionTabs[i].centerX(), sectionTabs[i].centerY());
+        }
+        // section panel
+        RectF panel = tmp;
+        panel.set(body.left + pad, sectionTabs[0].bottom + pad * 0.75f, body.right - pad, body.bottom - pad);
+        stroke.setColor(0xFF33384A);
+        stroke.setStrokeWidth(1.2f * dp);
+        c.drawRoundRect(panel, 10 * dp, 10 * dp, stroke);
+        fill.setColor(ACCENT);
+        c.drawRect(sectionTabs[menuSection].left + 8 * dp, panel.top - 1.5f * dp,
+                sectionTabs[menuSection].right - 8 * dp, panel.top + 1.5f * dp, fill);
+        // row labels
+        int[] rows = SECTION_ROWS[menuSection];
+        for (int r = 0; r < rows.length; r++) {
+            RectF first = null;
+            for (Opt o : opts) if (o.row == rows[r]) { first = o.r; break; }
+            if (first == null) continue;
+            text.setTextSize(12.5f * dp);
             text.setColor(0xFF9AA0B8);
-            centerText(c, MENU_ROWS[r], 32 * dp, body.top + pad + r * rowH + rowH / 2);
+            centerText(c, ROW_LABELS[rows[r]], body.left + 38 * dp, first.centerY());
         }
         for (Opt o : opts) {
             boolean sel = menuSelected(o.row) == o.idx;
-            boolean action = o.row == 3 && o.idx == SE_VOLS.length - 1;
+            boolean action = o.row == R_SE && o.idx == SE_VOLS.length - 1;
             fill.setShader(null);
-            fill.setColor(sel ? (o.row == 0 ? ACCENT : CYAN) : action ? 0xFF3A2E52 : 0xFF232634);
+            fill.setColor(sel ? CYAN : action ? 0xFF3A2E52 : 0xFF232634);
             c.drawRoundRect(o.r, 8 * dp, 8 * dp, fill);
             String s = menuOptions(o.row)[o.idx];
-            text.setTextSize((s.length() > 4 ? 11.5f : 13f) * dp);
+            float ts = s.length() > 5 ? 11f : (s.length() > 3 ? 12f : 13f);
+            text.setTextSize(ts * dp);
             text.setColor(sel ? 0xFF0D0E14 : 0xFFF2F3F8);
             centerText(c, s, o.r.centerX(), o.r.centerY());
         }
@@ -646,7 +741,7 @@ public final class InstrumentView extends View {
             c.drawRoundRect(p, r, r, stroke);
             text.setColor(flash > 0.4f ? 0xFF0D0E14 : 0xFFF2F3F8);
             text.setTextSize(14 * dp);
-            centerText(c, SynthCore.DRUM_NAMES[PAD_MAP[i]], p.centerX(), p.centerY());
+            centerText(c, SynthCore.DRUM_NAMES[padMap()[i]], p.centerX(), p.centerY());
         }
         return anim;
     }
@@ -1021,6 +1116,17 @@ public final class InstrumentView extends View {
             return;
         }
         if (menuOpen) {
+            for (int i = 0; i < 4; i++) {
+                if (sectionTabs[i].contains(x, y)) {
+                    t.type = 5;
+                    touches.put(id, t);
+                    performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+                    menuSection = i;
+                    layoutMenu();
+                    invalidate();
+                    return;
+                }
+            }
             for (Opt o : opts) {
                 if (o.r.contains(x, y)) {
                     t.type = 5;
@@ -1052,7 +1158,7 @@ public final class InstrumentView extends View {
                 t.midi = i;
                 t.voiceKey = synth.newKey();
                 touches.put(id, t);
-                synth.dtmfOn(t.voiceKey, PHONE_KEYS[i].charAt(0), 1f);
+                synth.dtmfOn(t.voiceKey, PHONE_KEYS[i].charAt(0), PHONE_VOL[phoneVolIdx]);
                 phoneHeld[i]++;
                 if (dialed.length() > 40) dialed.delete(0, dialed.length() - 40);
                 dialed.append(PHONE_KEYS[i]);
@@ -1073,7 +1179,7 @@ public final class InstrumentView extends View {
             if (isDialKey(k)) {
                 if (dtmf) {
                     t.voiceKey = synth.newKey();
-                    synth.dtmfOn(t.voiceKey, k.code.charAt(0), 1f);
+                    synth.dtmfOn(t.voiceKey, k.code.charAt(0), PHONE_VOL[phoneVolIdx]);
                 }
             } else {
                 playSE(k.code);
@@ -1086,8 +1192,8 @@ public final class InstrumentView extends View {
             if (p < 0) return;
             RectF r = pads[p];
             float dx = (x - r.centerX()) / (r.width() / 2), dy = (y - r.centerY()) / (r.height() / 2);
-            float vel = 1f - 0.4f * Math.min(1f, (float) Math.sqrt(dx * dx + dy * dy));
-            int drum = PAD_MAP[p];
+            float vel = drumVelMode == 1 ? 1f : 1f - 0.4f * Math.min(1f, (float) Math.sqrt(dx * dx + dy * dy));
+            int drum = padMap()[p];
             synth.drum(drum, vel);
             padFlash[p] = SystemClock.uptimeMillis();
             t.type = 2;
@@ -1216,7 +1322,7 @@ public final class InstrumentView extends View {
             case B_OCT_DN: if (octave > 1) { octave--; releaseAll(); save(); relayout(); } break;
             case B_OCT_UP: if (octave < maxOctave()) { octave++; releaseAll(); save(); relayout(); } break;
             case B_SUS: sustain = !sustain; synth.setSustain(sustain); break;
-            case B_MENU: menuOpen = !menuOpen; releaseAll(); relayout(); break;
+            case B_MENU: menuOpen = !menuOpen; menuSection = sectionForMode(); releaseAll(); relayout(); break;
             case B_TXT: textOut = !textOut; save(); break;
             case B_HIDE: host.onHide(); break;
         }
