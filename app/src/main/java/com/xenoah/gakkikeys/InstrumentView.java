@@ -47,7 +47,7 @@ public final class InstrumentView extends View {
     /**
      * Grid pad layouts (row-major 4x3, top row first) -> drum index.
      * [0] GM order filled bottom-up like an MPC / drum-rack (36 kick, 37 rim, 38 snare, 39 clap, ...).
-     * [1] the earlier layout.
+     * [1] rows by type: cymbals & hats / toms & 808 / kick, snare, clap, rim.
      */
     private static final int[][] PAD_LAYOUTS = {
             {SynthCore.TOM_H, SynthCore.CRASH, SynthCore.COWBELL, SynthCore.BASS808,
@@ -87,7 +87,8 @@ public final class InstrumentView extends View {
             new KitPiece(SynthCore.BASS808, -1, 0, K_PAD, 0.935f, 0.87f, 0.085f, "808"),
     };
 
-    private static final String[] PAD_LAYOUT_NAMES = {"リアル", "パッド(GM)", "旧配置"};
+    /** リアル = real kit, GM順パッド = General-MIDI order grid, 種類別パッド = rows by type (cymbals / toms / kick+snare). */
+    private static final String[] PAD_LAYOUT_NAMES = {"リアル", "GM順パッド", "種類別パッド"};
     private static final String[] VEL_MODES = {"位置で強弱", "一定"};
     private static final String[] PHONE_VOLS = {"小", "中", "大"};
     private static final float[] PHONE_VOL = {0.45f, 0.75f, 1f};
