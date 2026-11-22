@@ -1,18 +1,23 @@
 package com.xenoah.gakkikeys;
 
+import android.content.ComponentName;
 import android.inputmethodservice.InputMethodService;
 import android.text.InputType;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
+import android.view.inputmethod.InputMethodInfo;
 import android.view.inputmethod.InputMethodManager;
+import android.view.inputmethod.InputMethodSubtype;
 
-/** The input method: the keyboard is a playable instrument. */
+/**
+ * The input method. Each instrument (and the English sound keyboard) is registered as an
+ * input-method subtype ("language"), so it can be switched like any other keyboard language.
+ */
 public final class GakkiIME extends InputMethodService implements InstrumentView.Host {
     private SoundEngine engine;
     private InstrumentView view;
-    private final RomajiComposer comp = new RomajiComposer();
 
     @Override
     public void onCreate() {
@@ -24,6 +29,7 @@ public final class GakkiIME extends InputMethodService implements InstrumentView
     public View onCreateInputView() {
         if (view != null) view.releaseAll();
         view = new InstrumentView(this, engine.core(this), this);
+        applySubtype(currentSubtype());
         return view;
     }
 
@@ -35,14 +41,13 @@ public final class GakkiIME extends InputMethodService implements InstrumentView
     @Override
     public void onStartInputView(EditorInfo info, boolean restarting) {
         super.onStartInputView(info, restarting);
-        comp.clear();
+        applySubtype(currentSubtype());
         if (view != null) view.onStartInput(info.inputType);
         engine.start(this);
     }
 
     @Override
     public void onFinishInputView(boolean finishingInput) {
-        flush();
         if (view != null) view.releaseAll();
         engine.stop();
         super.onFinishInputView(finishingInput);
@@ -61,35 +66,48 @@ public final class GakkiIME extends InputMethodService implements InstrumentView
         super.onDestroy();
     }
 
+    // ---- subtypes ("languages")
+    private InputMethodManager imm() {
+        return (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+    }
+
+    private InputMethodSubtype currentSubtype() {
+        InputMethodManager imm = imm();
+        return imm == null ? null : imm.getCurrentInputMethodSubtype();
+    }
+
     @Override
-    public void onUpdateSelection(int oldSelStart, int oldSelEnd, int newSelStart, int newSelEnd,
-                                  int candStart, int candEnd) {
-        super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candStart, candEnd);
-        // cursor moved away from the composing text -> fix it as is
-        if (!comp.isEmpty() && (candStart == -1 || newSelStart != candEnd || newSelEnd != candEnd)) {
-            comp.clear();
-            InputConnection ic = getCurrentInputConnection();
-            if (ic != null) ic.finishComposingText();
+    protected void onCurrentInputMethodSubtypeChanged(InputMethodSubtype subtype) {
+        super.onCurrentInputMethodSubtypeChanged(subtype);
+        applySubtype(subtype);
+    }
+
+    private void applySubtype(InputMethodSubtype st) {
+        if (view == null || st == null) return;
+        String m = st.containsExtraValueKey("mode") ? st.getExtraValueOf("mode") : null;
+        if (m != null) view.applyMode(m);
+    }
+
+    /** A tab was tapped: move the system's current subtype along so the language indicator matches. */
+    @Override
+    public void onModeSelected(String mode) {
+        InputMethodManager imm = imm();
+        if (imm == null) return;
+        String id = new ComponentName(this, GakkiIME.class).flattenToShortString();
+        for (InputMethodInfo imi : imm.getEnabledInputMethodList()) {
+            if (!imi.getPackageName().equals(getPackageName())) continue;
+            for (InputMethodSubtype st : imm.getEnabledInputMethodSubtypeList(imi, true)) {
+                if (st.containsExtraValueKey("mode") && mode.equals(st.getExtraValueOf("mode"))) {
+                    InputMethodSubtype cur = imm.getCurrentInputMethodSubtype();
+                    if (cur == null || !cur.equals(st)) switchInputMethod(imi.getId(), st);
+                    return;
+                }
+            }
+            return;
         }
     }
 
     // ---- typing
-    private void flush() {
-        InputConnection ic = getCurrentInputConnection();
-        if (ic == null) { comp.clear(); return; }
-        if (!comp.isEmpty()) ic.commitText(comp.finish(), 1);
-    }
-
-    private void showComposing(InputConnection ic) {
-        String d = comp.display();
-        if (d.isEmpty()) {
-            ic.setComposingText("", 1);
-            ic.finishComposingText();
-        } else {
-            ic.setComposingText(d, 1);
-        }
-    }
-
     private void enter(InputConnection ic) {
         EditorInfo ei = getCurrentInputEditorInfo();
         if (ei != null) {
@@ -106,49 +124,24 @@ public final class GakkiIME extends InputMethodService implements InstrumentView
     }
 
     @Override
-    public void onTypeKey(String code, boolean kana) {
+    public void onTypeKey(String code) {
         InputConnection ic = getCurrentInputConnection();
         if (ic == null) return;
         switch (code) {
-            case "FLUSH":
-                flush();
+            case "DEL": {
+                CharSequence sel = ic.getSelectedText(0);
+                if (sel != null && sel.length() > 0) ic.commitText("", 1);
+                else sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL);
                 return;
-            case "DEL":
-                if (!comp.isEmpty()) {
-                    comp.backspace();
-                    showComposing(ic);
-                } else {
-                    CharSequence sel = ic.getSelectedText(0);
-                    if (sel != null && sel.length() > 0) ic.commitText("", 1);
-                    else sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL);
-                }
-                return;
+            }
             case "SPACE":
-                if (!comp.isEmpty()) { // no dictionary: space toggles hiragana / katakana
-                    comp.toggleKatakana();
-                    showComposing(ic);
-                } else {
-                    ic.commitText(kana ? "　" : " ", 1);
-                }
+                ic.commitText(" ", 1);
                 return;
             case "ENTER":
-                if (!comp.isEmpty()) flush();
-                else enter(ic);
+                enter(ic);
                 return;
         }
-        char c = code.length() == 1 ? code.charAt(0) : 0;
-        if (kana && ((c >= 'a' && c <= 'z') || c == 'ー' || (c == '\'' && !comp.isEmpty()))) {
-            comp.type(c == 'ー' ? '-' : c);
-            showComposing(ic);
-            return;
-        }
-        flush();
         ic.commitText(code, 1);
-    }
-
-    @Override
-    public boolean isComposing() {
-        return !comp.isEmpty();
     }
 
     // ---- Host
@@ -159,7 +152,7 @@ public final class GakkiIME extends InputMethodService implements InstrumentView
 
     @Override
     public void onPickIme() {
-        InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        InputMethodManager imm = imm();
         if (imm != null) imm.showInputMethodPicker();
     }
 
@@ -170,7 +163,6 @@ public final class GakkiIME extends InputMethodService implements InstrumentView
 
     @Override
     public void onCommit(String text) {
-        flush();
         InputConnection ic = getCurrentInputConnection();
         if (ic != null) ic.commitText(text, 1);
     }

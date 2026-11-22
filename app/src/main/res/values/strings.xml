@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">楽器キー</string>
-    <string name="subtype_label">楽器</string>
+    <string name="subtype_type">サウンドキーボード（英語）</string>
+    <string name="subtype_drum">楽器：ドラム</string>
+    <string name="subtype_keys">楽器：鍵盤</string>
+    <string name="subtype_phone">楽器：電話機</string>
+    <string name="subtype_voice">楽器：声（英語発音記号）</string>
 </resources>

@@ -51,7 +51,18 @@ public final class SetupActivity extends Activity {
 
         root.addView(button("① キーボード設定で「楽器キー」をON", () ->
                 startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))));
-        root.addView(button("② 入力方法を「楽器キー」に切り替え", () -> {
+        root.addView(button("② 使う楽器（言語）を選ぶ（全部ONが標準）", () -> {
+            Intent i = new Intent(Settings.ACTION_INPUT_METHOD_SUBTYPE_SETTINGS);
+            i.putExtra(Settings.EXTRA_INPUT_METHOD_ID,
+                    new android.content.ComponentName(this, GakkiIME.class).flattenToShortString());
+            i.putExtra(Intent.EXTRA_TITLE, "楽器キー");
+            try {
+                startActivity(i);
+            } catch (Exception e) {
+                startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS));
+            }
+        }));
+        root.addView(button("③ 入力方法を「楽器キー」に切り替え", () -> {
             InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
             if (imm != null) imm.showInputMethodPicker();
         }));
@@ -61,16 +72,17 @@ public final class SetupActivity extends Activity {
         how.setTextSize(14);
         how.setLineSpacing(0, 1.3f);
         how.setPadding(0, pad, 0, pad / 2);
-        how.setText("③ 下の欄をタップして演奏\n\n"
-                + "・🥁 ドラム：TR-808風の12パッド。パッドの中心ほど強く鳴る\n"
-                + "・🎹 鍵盤：⚙の「音色」でピアノ / LEAD / SQUARE / PAD / BASS。「幅」で1〜3オクターブ（標準1オクターブ）。"
-                + "ピアノは手前ほど強く＆SUSでペダル、シンセは上下で明るさ・横スライドでポルタメント\n"
-                + "・☎ 電話機：電話のテンキーでDTMF（プッシュ音）を鳴らす。あONで数字も入力\n"
-                + "・🗣 声：英語の発音記号キー。押すと発音、▶で単語として喋る\n"
-                + "・⌨ 文字入力：ローマ字かな / ABC。キーごとにランダムな効果音（⚙「タイプ音」で音量、🎲で配置シャッフル）\n"
-                + "・123：電話型テンキー。押すとDTMF（プッシュ音）が鳴る\n"
-                + "・◀ ▶：オクターブ / あ：鳴らした音を文字入力 / 🌐：次のキーボード（長押しで選択）\n\n"
-                + "音量はメディア音量に連動します。");
+        how.setText("④ 下の欄をタップして演奏\n\n"
+                + "楽器はそれぞれキーボードの「言語」として登録されています。🌐（またはシステムのキーボード切替）で、"
+                + "サウンドキーボード（英語）→ ドラム → 鍵盤 → 電話機 → 声 と切り替わります。上のタブでも切替できます。\n\n"
+                + "・⌨ サウンドキーボード（英語）：キーごとにランダムな効果音（⚙「タイプ音」）。123は電話型テンキーでプッシュ音\n"
+                + "・🥁 ドラム：TR-808風。実際のドラムセット配置（⚙でパッド配置にも）\n"
+                + "・🎹 鍵盤：⚙で音色（ピアノ / LEAD / SQUARE / PAD / BASS）と幅（1〜3オクターブ）\n"
+                + "・☎ 電話機：公衆電話風テンキーでDTMF（プッシュ音）\n"
+                + "・🗣 声：英語の発音記号キー。押すと発音、▶で単語として喋る（⚙で男性 / 女性）\n"
+                + "・✎：ONにすると、鳴らした音（ドレミ・数字・発音記号など）を入力欄にも入力\n"
+                + "・🌐：次のキーボード / 言語（長押しで一覧）\n\n"
+                + "日本語入力はありません。日本語は🌐でGboardなどに切り替えてください。音量はメディア音量に連動します。");
         root.addView(how);
 
         EditText test = new EditText(this);
