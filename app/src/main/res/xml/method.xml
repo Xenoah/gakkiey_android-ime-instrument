@@ -1,42 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Each instrument is an input-method subtype ("language"), switchable with 🌐 or the system keyboard switcher. -->
 <input-method xmlns:android="http://schemas.android.com/apk/res/android"
     android:settingsActivity="com.xenoah.gakkikeys.SetupActivity"
     android:supportsSwitchingToNextInputMethod="true">
     <subtype
-        android:label="@string/subtype_type"
-        android:subtypeId="0x6b0e0001"
-        android:imeSubtypeLocale="en_US"
-        android:imeSubtypeMode="keyboard"
-        android:imeSubtypeExtraValue="mode=type"
-        android:isAsciiCapable="true"
-        android:overridesImplicitlyEnabledSubtype="true" />
-    <subtype
-        android:label="@string/subtype_drum"
-        android:subtypeId="0x6b0e0002"
-        android:imeSubtypeLocale="zz"
-        android:imeSubtypeMode="keyboard"
-        android:imeSubtypeExtraValue="mode=drum"
-        android:overridesImplicitlyEnabledSubtype="true" />
-    <subtype
-        android:label="@string/subtype_keys"
-        android:subtypeId="0x6b0e0003"
-        android:imeSubtypeLocale="zz"
-        android:imeSubtypeMode="keyboard"
-        android:imeSubtypeExtraValue="mode=keys"
-        android:overridesImplicitlyEnabledSubtype="true" />
-    <subtype
-        android:label="@string/subtype_phone"
-        android:subtypeId="0x6b0e0004"
-        android:imeSubtypeLocale="zz"
-        android:imeSubtypeMode="keyboard"
-        android:imeSubtypeExtraValue="mode=phone"
-        android:overridesImplicitlyEnabledSubtype="true" />
-    <subtype
-        android:label="@string/subtype_voice"
-        android:subtypeId="0x6b0e0005"
-        android:imeSubtypeLocale="en_US"
-        android:imeSubtypeMode="keyboard"
-        android:imeSubtypeExtraValue="mode=voice"
-        android:overridesImplicitlyEnabledSubtype="true" />
+        android:label="@string/subtype_label"
+        android:imeSubtypeLocale="ja_JP"
+        android:imeSubtypeMode="keyboard" />
 </input-method>
