@@ -216,6 +216,10 @@ public final class Speech {
         post(segs, key, false, f0);
     }
 
+    public boolean isActive() {
+        return active;
+    }
+
     public void release(int key) {
         Ev e = new Ev();
         e.key = key;
@@ -242,6 +246,8 @@ public final class Speech {
     private float f0Base = 120f, f0 = 120f;
     private double gph, vibPh;
     private float prevFlow;
+    private Seg glideSeg;
+    private float glideA;
     /** Female: shorter vocal tract (formants x1.17), wider bandwidths, breathier, softer pulse. */
     private float fScale = 1f, bwScale = 1f, breath = 0f, openQ = 0.4f, closeQ = 0.16f;
     private int seed = 0x2468ACE;
@@ -314,7 +320,11 @@ public final class Speech {
         float fadeStep = 1f / (0.04f * sr);
         for (int i = 0; i < frames; i++) {
             Seg s = segs.get(segIdx);
-            float a = 1f - (float) Math.exp(-1.0 / (Math.max(0.001f, s.glide) * sr));
+            if (s != glideSeg) { // glide coefficient only changes per segment
+                glideSeg = s;
+                glideA = 1f - (float) Math.exp(-1.0 / (Math.max(0.001f, s.glide) * sr));
+            }
+            float a = glideA;
             for (int k = 0; k < NP; k++) cur[k] += (s.t[k] - cur[k]) * a;
             // f0: declination over the utterance, stress accents, gentle vibrato
             float prog = total > 0 ? Math.min(1f, done / (float) total) : 0f;
@@ -322,7 +332,7 @@ public final class Speech {
             f0 += (target - f0) * 0.0015f;
             vibPh += 5.2 / sr;
             if (vibPh >= 1) vibPh -= 1;
-            float ff = f0 * (1f + 0.012f * (float) Math.sin(2 * Math.PI * vibPh));
+            float ff = f0 * (1f + 0.012f * SynthCore.sinCycles(vibPh));
             if ((i & 31) == 0) {
                 setRes(0, cur[F1] * fScale, cur[B1] * bwScale);
                 setRes(1, cur[F2] * fScale, cur[B2] * bwScale);

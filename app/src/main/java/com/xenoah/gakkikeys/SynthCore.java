@@ -29,6 +29,35 @@ public final class SynthCore {
         for (int i = 0; i <= TABLE; i++) SINE[i] = (float) Math.sin(2 * Math.PI * i / TABLE);
     }
 
+    /** e^-x for x >= 0 via table (per-sample envelopes). */
+    private static final int EXN = 8192;
+    private static final float EXMAX = 24f;
+    private static final float[] EXT = new float[EXN + 2];
+
+    static {
+        for (int i = 0; i < EXT.length; i++) EXT[i] = (float) Math.exp(-i * EXMAX / EXN);
+    }
+
+    static float ex(double x) {
+        if (x <= 0) return 1f;
+        double f = x * (EXN / EXMAX);
+        if (f >= EXN) return 0f;
+        int i = (int) f;
+        float fr = (float) (f - i);
+        return EXT[i] + (EXT[i + 1] - EXT[i]) * fr;
+    }
+
+    /** tanh approximation (Padé, clamped). */
+    static float tanhF(float x) {
+        if (x > 3f) return 1f;
+        if (x < -3f) return -1f;
+        return x * (27f + x * x) / (27f + 9f * x * x);
+    }
+
+    static float sinCycles(double ph) {
+        return sin(ph - Math.floor(ph));
+    }
+
     private static float sin(double ph) { // ph in cycles, [0,1)
         double x = ph * TABLE;
         int i = (int) x;
@@ -164,6 +193,14 @@ public final class SynthCore {
     private final int[] apIdx;
 
     private float[] mix = new float[0], send = new float[0];
+    /** Smoothed output peak (0..1) for UI glow / sound-pressure haptics. */
+    private volatile float level;
+    private float levelSm;
+    private int idleBlocks;
+
+    public float level() {
+        return level;
+    }
     private final Speech speech;
 
     /** English-IPA formant voice. */
@@ -435,8 +472,10 @@ public final class SynthCore {
         if (mix.length < frames) { mix = new float[frames]; send = new float[frames]; }
         for (int i = 0; i < frames; i++) { mix[i] = 0; send[i] = 0; }
 
+        boolean any = false;
         for (Voice v : voices) {
             if (!v.active) continue;
+            any = true;
             switch (v.kind) {
                 case PIANO: renderPiano(v, frames); break;
                 case SYNTH: renderSynth(v, frames); break;
@@ -447,7 +486,16 @@ public final class SynthCore {
         }
 
         speech.render(mix, send, frames);
+        if (speech.isActive()) any = true;
 
+        if (any) idleBlocks = 0;
+        else if (++idleBlocks > (int) (sr * 4 / Math.max(1, frames))) { // silent > 4 s: reverb tail gone, skip DSP
+            java.util.Arrays.fill(out, 0, frames * 2, 0f);
+            levelSm = 0f;
+            level = 0f;
+            return;
+        }
+        float pk = 0f;
         for (int i = 0; i < frames; i++) {
             float wet = reverb(send[i]);
             float s = (mix[i] + wet) * 0.55f;
@@ -457,7 +505,12 @@ public final class SynthCore {
             else s = s * (27f + s * s) / (27f + 9f * s * s);
             out[2 * i] = s;
             out[2 * i + 1] = s;
+            float as = Math.abs(s);
+            if (as > pk) pk = as;
         }
+        float rel = ex(frames / (0.09 * sr));
+        levelSm = pk > levelSm ? pk : levelSm * rel;
+        level = levelSm;
     }
 
     private float reverb(float x) {
@@ -620,38 +673,38 @@ public final class SynthCore {
             float s;
             float env;
             switch (v.sub) {
-                case 0: f = 880 * r; s = sq(v.ph[0]) * 0.6f; env = (float) Math.exp(-t / 0.03); break; // blip
+                case 0: f = 880 * r; s = sq(v.ph[0]) * 0.6f; env = ex(t / 0.03); break; // blip
                 case 1: f = (t < 0.07f ? 988 : 1319) * r; s = sq(v.ph[0]) * 0.55f;                     // coin
-                    env = t < 0.07f ? 0.8f : (float) Math.exp(-(t - 0.07f) / 0.12); break;
+                    env = t < 0.07f ? 0.8f : ex((t - 0.07f) / 0.12); break;
                 case 2: f = 300 * r * (1 + 2 * Math.min(t / 0.15, 1)); s = sq(v.ph[0]) * 0.5f;         // jump
-                    env = (float) Math.exp(-t / 0.09); break;
-                case 3: f = 1800 * r * Math.exp(-t / 0.06) + 150; s = (float) (2 * v.ph[0] - 1) * 0.6f; // laser
-                    env = (float) Math.exp(-t / 0.08); break;
-                case 4: f = 700 * r * Math.exp(-t / 0.02) + 150; s = sin(v.ph[0]);                      // pop
-                    env = (float) Math.exp(-t / 0.025); break;
+                    env = ex(t / 0.09); break;
+                case 3: f = 1800 * r * ex(t / 0.06) + 150; s = (float) (2 * v.ph[0] - 1) * 0.6f; // laser
+                    env = ex(t / 0.08); break;
+                case 4: f = 700 * r * ex(t / 0.02) + 150; s = sin(v.ph[0]);                      // pop
+                    env = ex(t / 0.025); break;
                 case 5: f = Math.min(3000, 250 * r * Math.exp(t / 0.05)); s = sin(v.ph[0]);             // bubble
-                    env = (float) Math.exp(-t / 0.045) * Math.min(1f, t / 0.005f); break;
-                case 6: f = 150 * r; s = svf(v, noise(v), 1) * 1.6f * (float) Math.exp(-t / 0.006)       // typewriter
-                        + sin(v.ph[0]) * 0.5f * (float) Math.exp(-t / 0.01); env = 1f; break;
+                    env = ex(t / 0.045) * Math.min(1f, t / 0.005f); break;
+                case 6: f = 150 * r; s = svf(v, noise(v), 1) * 1.6f * ex(t / 0.006)       // typewriter
+                        + sin(v.ph[0]) * 0.5f * ex(t / 0.01); env = 1f; break;
                 case 7: f = 1568 * r; f2 = 2349 * r; s = sin(v.ph[0]) * 0.6f + sin(v.ph[1]) * 0.4f;     // chime
-                    env = (float) Math.exp(-t / 0.35); break;
-                case 8: f = 180 * r * (1 + 0.4 * Math.sin(2 * Math.PI * 18 * t) * Math.exp(-t / 0.15)); // boing
-                    s = sin(v.ph[0]) * 0.7f + tri(v.ph[0]) * 0.3f; env = (float) Math.exp(-t / 0.25); break;
-                case 9: f = 1500 * r * Math.exp(-t / 0.04) + 100; s = sq(v.ph[0]) * 0.45f + noise(v) * 0.25f; // zap
-                    env = (float) Math.exp(-t / 0.05); break;
+                    env = ex(t / 0.35); break;
+                case 8: f = 180 * r * (1 + 0.4 * Math.sin(2 * Math.PI * 18 * t) * ex(t / 0.15)); // boing
+                    s = sin(v.ph[0]) * 0.7f + tri(v.ph[0]) * 0.3f; env = ex(t / 0.25); break;
+                case 9: f = 1500 * r * ex(t / 0.04) + 100; s = sq(v.ph[0]) * 0.45f + noise(v) * 0.25f; // zap
+                    env = ex(t / 0.05); break;
                 case 10: { int step = (int) (t / 0.035f); f = 523 * r * Math.pow(2, step * 4 / 12.0);   // power-up
-                    s = sq(v.ph[0]) * 0.5f; env = t < 0.18f ? 0.8f : (float) Math.exp(-(t - 0.18f) / 0.03); break; }
-                case 11: f = 1200 * r * Math.exp(-t / 0.05) + 300; s = sin(v.ph[0]);                     // drop
-                    env = (float) Math.exp(-t / 0.06); break;
-                case 12: f = 2200 * r; s = sin(v.ph[0]); env = (float) Math.exp(-t / 0.004); break;      // tick
-                case 13: f = 750 * r; s = sin(v.ph[0]) * (float) Math.exp(-t / 0.02)                      // wood
-                        + svf(v, noise(v), 1) * (float) Math.exp(-t / 0.005); env = 1f; break;
-                case 14: f = 1319 * r; s = tri(v.ph[0]); env = (float) Math.exp(-t / 0.2); break;        // tri bell
+                    s = sq(v.ph[0]) * 0.5f; env = t < 0.18f ? 0.8f : ex((t - 0.18f) / 0.03); break; }
+                case 11: f = 1200 * r * ex(t / 0.05) + 300; s = sin(v.ph[0]);                     // drop
+                    env = ex(t / 0.06); break;
+                case 12: f = 2200 * r; s = sin(v.ph[0]); env = ex(t / 0.004); break;      // tick
+                case 13: f = 750 * r; s = sin(v.ph[0]) * ex(t / 0.02)                      // wood
+                        + svf(v, noise(v), 1) * ex(t / 0.005); env = 1f; break;
+                case 14: f = 1319 * r; s = tri(v.ph[0]); env = ex(t / 0.2); break;        // tri bell
                 case 15: f = 1000 * r; s = Math.max(-0.6f, Math.min(0.6f, sin(v.ph[0]) * 1.5f));         // beep
-                    env = t < 0.08f ? 1f : (float) Math.exp(-(t - 0.08f) / 0.008); break;
+                    env = t < 0.08f ? 1f : ex((t - 0.08f) / 0.008); break;
                 case 16: f = 880 * r; f2 = 880 * 5.4 * r;                                                // kalimba
-                    s = sin(v.ph[0]) + sin(v.ph[1]) * 0.3f * (float) Math.exp(-t / 0.03); env = (float) Math.exp(-t / 0.3); break;
-                default: s = svf(v, noise(v), 0) * 1.2f; env = (float) Math.exp(-t / 0.05); break;     // noise hit
+                    s = sin(v.ph[0]) + sin(v.ph[1]) * 0.3f * ex(t / 0.03); env = ex(t / 0.3); break;
+                default: s = svf(v, noise(v), 0) * 1.2f; env = ex(t / 0.05); break;     // noise hit
             }
             v.ph[0] = wrap(v.ph[0] + f / sr);
             if (f2 > 0) v.ph[1] = wrap(v.ph[1] + f2 / sr);
@@ -664,7 +717,7 @@ public final class SynthCore {
     }
 
     private static float soft(float x, float drive) {
-        return (float) (Math.tanh(x * drive) / Math.tanh(drive));
+        return tanhF(x * drive) / tanhF(drive);
     }
 
     private float metal(Voice v) {
@@ -685,26 +738,26 @@ public final class SynthCore {
             float s;
             switch (v.sub) {
                 case KICK: { // 808 bass drum: bridged-T sine, small pitch drop, trigger click
-                    double f = 52 * (1 + 0.55 * Math.exp(-t / 0.011));
+                    double f = 52 * (1 + 0.55 * ex(t / 0.011));
                     v.ph[0] = wrap(v.ph[0] + f / sr);
-                    float body = sin(v.ph[0]) * (float) Math.exp(-t / 0.42);
+                    float body = sin(v.ph[0]) * ex(t / 0.42);
                     float click = (t < 0.0012f ? (float) Math.sin(Math.PI * t / 0.0012f) : 0f) * 0.5f;
                     s = soft(body * 1.15f + click, 1.4f);
                     break;
                 }
                 case BASS808: { // long, saturated 808 boom
-                    double f = 46 * (1 + 0.9 * Math.exp(-t / 0.02));
+                    double f = 46 * (1 + 0.9 * ex(t / 0.02));
                     v.ph[0] = wrap(v.ph[0] + f / sr);
-                    float env = (float) Math.exp(-t / 1.1);
+                    float env = ex(t / 1.1);
                     s = soft(sin(v.ph[0]) * env * 1.2f, 2.2f) * Math.min(1f, env * 4f);
                     break;
                 }
                 case SNARE: { // 238 Hz + 476 Hz bridged-T tones + high-passed "snappy" noise
-                    v.ph[0] = wrap(v.ph[0] + 238.0 * (1 + 0.04 * Math.exp(-t / 0.01)) / sr);
+                    v.ph[0] = wrap(v.ph[0] + 238.0 * (1 + 0.04 * ex(t / 0.01)) / sr);
                     v.ph[1] = wrap(v.ph[1] + 476.0 / sr);
-                    float tone = sin(v.ph[0]) * 0.7f * (float) Math.exp(-t / 0.10)
-                            + sin(v.ph[1]) * 0.45f * (float) Math.exp(-t / 0.055);
-                    float n = svf(v, noise(v), 2) * (float) Math.exp(-t / 0.15);
+                    float tone = sin(v.ph[0]) * 0.7f * ex(t / 0.10)
+                            + sin(v.ph[1]) * 0.45f * ex(t / 0.055);
+                    float n = svf(v, noise(v), 2) * ex(t / 0.15);
                     s = tone + n * 0.65f;
                     break;
                 }
@@ -715,7 +768,7 @@ public final class SynthCore {
                         burst = 1f - dt / 0.009f;
                         burst *= burst;
                     }
-                    float tail = t >= 0.02f ? (float) Math.exp(-(t - 0.02f) / 0.17) * 0.55f : 0f;
+                    float tail = t >= 0.02f ? ex((t - 0.02f) / 0.17) * 0.55f : 0f;
                     float n = noise(v);
                     s = svf(v, n, 1) * burst * 2.4f + svf2(v, n, 1) * tail * 2.0f;
                     break;
@@ -723,7 +776,7 @@ public final class SynthCore {
                 case RIM: { // 455 Hz + 1667 Hz, very short, high-passed and clipped
                     v.ph[0] = wrap(v.ph[0] + 455.0 / sr);
                     v.ph[1] = wrap(v.ph[1] + 1667.0 / sr);
-                    float env = (float) Math.exp(-t / 0.0075);
+                    float env = ex(t / 0.0075);
                     float x = (sin(v.ph[0]) + sin(v.ph[1]) * 0.8f) * env;
                     s = soft(svf(v, x, 2) * 2.2f, 2.5f) * 0.8f;
                     break;
@@ -731,21 +784,21 @@ public final class SynthCore {
                 case CHAT: case OHAT: { // six square oscillators -> band-pass -> high-pass
                     float x = svf2(v, svf(v, metal(v), 1), 2);
                     float tau = v.sub == CHAT ? 0.042f : 0.38f;
-                    float env = (float) Math.exp(-t / tau) * Math.min(1f, t / 0.0008f);
+                    float env = ex(t / tau) * Math.min(1f, t / 0.0008f);
                     s = x * env * 5.5f;
                     break;
                 }
                 case RIDE: { // ride: narrow metallic wash (long) + stick "ping"
                     float m = metal(v);
-                    float wash = svf(v, m, 1) * (float) Math.exp(-t / 1.6) * 1.1f;
-                    float ping = svf2(v, m, 2) * (float) Math.exp(-t / 0.06) * 2.4f;
+                    float wash = svf(v, m, 1) * ex(t / 1.6) * 1.1f;
+                    float ping = svf2(v, m, 2) * ex(t / 0.06) * 2.4f;
                     s = (wash + ping) * Math.min(1f, t / 0.0008f) * 0.85f;
                     break;
                 }
                 case CRASH: { // 808 cymbal: low band (long) + high band (shorter)
                     float m = metal(v);
-                    float lo = svf(v, m, 1) * (float) Math.exp(-t / 0.9) * 1.4f;
-                    float hi = svf2(v, m, 2) * (float) Math.exp(-t / 0.35) * 2.2f;
+                    float lo = svf(v, m, 1) * ex(t / 0.9) * 1.4f;
+                    float hi = svf2(v, m, 2) * ex(t / 0.35) * 2.2f;
                     s = (lo + hi) * Math.min(1f, t / 0.001f);
                     break;
                 }
@@ -754,17 +807,17 @@ public final class SynthCore {
                     float b = v.ph[1] < 0.5 ? 1f : -1f;
                     v.ph[0] += v.pf[0]; if (v.ph[0] >= 1) v.ph[0] -= 1;
                     v.ph[1] += v.pf[1]; if (v.ph[1] >= 1) v.ph[1] -= 1;
-                    float env = (float) (Math.exp(-t / 0.015) * 0.65 + Math.exp(-t / 0.28) * 0.35);
+                    float env = (float) (ex(t / 0.015) * 0.65 + ex(t / 0.28) * 0.35);
                     s = svf2(v, svf(v, (a + b) * 0.5f, 1), 2) * env * 1.6f;
                     break;
                 }
                 case TOM_L: case TOM_M: case TOM_H: { // sine with slight bend + a touch of filtered noise
                     double f0 = v.sub == TOM_L ? 90 : (v.sub == TOM_M ? 130 : 190);
-                    double f = f0 * (1 + 0.18 * Math.exp(-t / 0.045));
+                    double f = f0 * (1 + 0.18 * ex(t / 0.045));
                     v.ph[0] = wrap(v.ph[0] + f / sr);
                     float tau = v.sub == TOM_L ? 0.50f : (v.sub == TOM_M ? 0.40f : 0.32f);
-                    s = sin(v.ph[0]) * (float) Math.exp(-t / tau)
-                            + svf(v, noise(v), 0) * (float) Math.exp(-t / 0.03) * 0.18f;
+                    s = sin(v.ph[0]) * ex(t / tau)
+                            + svf(v, noise(v), 0) * ex(t / 0.03) * 0.18f;
                     break;
                 }
                 default: s = 0;

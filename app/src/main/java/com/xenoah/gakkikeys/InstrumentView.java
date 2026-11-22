@@ -11,6 +11,9 @@ import android.graphics.RectF;
 import android.graphics.Shader;
 import android.graphics.Typeface;
 import android.os.SystemClock;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
+import android.os.VibratorManager;
 import android.text.InputType;
 import android.util.DisplayMetrics;
 import android.util.SparseArray;
@@ -274,6 +277,19 @@ public final class InstrumentView extends View {
         phoneVolIdx = clamp(prefs.getInt("phoneVol", 2), 0, PHONE_VOLS.length - 1);
         voicePitchIdx = clamp(prefs.getInt("voicePitch", 1), 0, VOICE_PITCHES.length - 1);
         voiceType = clamp(prefs.getInt("voiceType", 0), 0, VOICE_TYPES.length - 1);
+        lightMode = clamp(prefs.getInt("light", 2), 0, LIGHT_MODES.length - 1);
+        vibeMode = clamp(prefs.getInt("vibe", 1), 0, VIBE_MODES.length - 1);
+        try {
+            if (Build.VERSION.SDK_INT >= 31) {
+                VibratorManager vm = ctx.getSystemService(VibratorManager.class);
+                if (vm != null) vibrator = vm.getDefaultVibrator();
+            } else {
+                vibrator = (Vibrator) ctx.getSystemService(Context.VIBRATOR_SERVICE);
+            }
+            if (vibrator != null && !vibrator.hasVibrator()) vibrator = null;
+        } catch (Exception e) {
+            vibrator = null;
+        }
         textOut = prefs.getBoolean("text", false);
         ipaLang = prefs.getBoolean("ipa", false);
         sound = clamp(sound, 0, SOUNDS.length - 1);
@@ -314,7 +330,7 @@ public final class InstrumentView extends View {
         prefs.edit().putInt("mode", mode).putInt("octave", octave).putInt("sound", sound)
                 .putInt("width", widthIdx).putInt("labels", labelIdx).putInt("seVol", seVolIdx)
                 .putInt("seSeed", seSeed).putInt("drumLayout", padLayout).putInt("drumVel", drumVelMode)
-                .putInt("phoneVol", phoneVolIdx).putInt("voicePitch", voicePitchIdx).putInt("voiceType", voiceType).putBoolean("dtmf", dtmf).putBoolean("text", textOut).apply();
+                .putInt("phoneVol", phoneVolIdx).putInt("voicePitch", voicePitchIdx).putInt("voiceType", voiceType).putInt("light", lightMode).putInt("vibe", vibeMode).putBoolean("dtmf", dtmf).putBoolean("text", textOut).apply();
     }
 
     // ================================================================== layout
@@ -361,6 +377,7 @@ public final class InstrumentView extends View {
     private void relayout() {
         int w = getWidth() - insetL - insetR, h = getHeight() - insetB;
         if (w <= 0 || h <= 0) return;
+        shaderCache.clear();
         cw = w;
         ch = h;
         barH = 44 * dp;
@@ -676,17 +693,18 @@ public final class InstrumentView extends View {
     }
 
     // ------------------------------------------------------------------ menu (sectioned per tab)
-    private static final String[] SECTION_NAMES = {"🥁ドラム", "🎹鍵盤", "☎電話", "🗣声", "⌨文字"};
+    private static final String[] SECTION_NAMES = {"✨全体", "🥁ドラム", "🎹鍵盤", "☎電話", "🗣声", "⌨文字"};
     private static final int R_PAD_LAYOUT = 0, R_DRUM_VEL = 1, R_SOUND = 2, R_WIDTH = 3, R_LABEL = 4,
-            R_PHONE_VOL = 5, R_SE = 6, R_DTMF = 7, R_VOICE_PITCH = 8, R_VOICE_TYPE = 9;
-    private static final String[] ROW_LABELS = {"配置", "強弱", "音色", "幅", "表示", "音量", "タイプ音", "テンキー音", "声の高さ", "声の種類"};
+            R_PHONE_VOL = 5, R_SE = 6, R_DTMF = 7, R_VOICE_PITCH = 8, R_VOICE_TYPE = 9, R_LIGHT = 10, R_VIBE = 11;
+    private static final String[] ROW_LABELS = {"配置", "強弱", "音色", "幅", "表示", "音量", "タイプ音", "テンキー音", "声の高さ", "声の種類", "光", "振動"};
     private static final int[][] SECTION_ROWS = {
+            {R_LIGHT, R_VIBE},
             {R_PAD_LAYOUT, R_DRUM_VEL},
             {R_SOUND, R_WIDTH, R_LABEL},
             {R_PHONE_VOL},
             {R_VOICE_TYPE, R_VOICE_PITCH},
             {R_SE, R_DTMF}};
-    private final RectF[] sectionTabs = {new RectF(), new RectF(), new RectF(), new RectF(), new RectF()};
+    private final RectF[] sectionTabs = {new RectF(), new RectF(), new RectF(), new RectF(), new RectF(), new RectF()};
 
     private int[] padMap() {
         return PAD_LAYOUTS[padLayout == 2 ? 1 : 0];
@@ -698,11 +716,11 @@ public final class InstrumentView extends View {
 
     private int sectionForMode() {
         switch (mode) {
-            case MODE_DRUM: return 0;
-            case MODE_PHONE: return 2;
-            case MODE_VOICE: return 3;
-            case MODE_TYPE: return 4;
-            default: return 1;
+            case MODE_DRUM: return 1;
+            case MODE_PHONE: return 3;
+            case MODE_VOICE: return 4;
+            case MODE_TYPE: return 5;
+            default: return 2;
         }
     }
 
@@ -717,6 +735,8 @@ public final class InstrumentView extends View {
             case R_SE: return SE_VOLS;
             case R_VOICE_PITCH: return VOICE_PITCHES;
             case R_VOICE_TYPE: return VOICE_TYPES;
+            case R_LIGHT: return LIGHT_MODES;
+            case R_VIBE: return VIBE_MODES;
             default: return ONOFF;
         }
     }
@@ -732,6 +752,8 @@ public final class InstrumentView extends View {
             case R_SE: return seVolIdx;
             case R_VOICE_PITCH: return voicePitchIdx;
             case R_VOICE_TYPE: return voiceType;
+            case R_LIGHT: return lightMode;
+            case R_VIBE: return vibeMode;
             default: return dtmf ? 0 : 1;
         }
     }
@@ -795,6 +817,15 @@ public final class InstrumentView extends View {
                 }
                 break;
             case R_DTMF: dtmf = o.idx == 0; break;
+            case R_LIGHT: lightMode = o.idx; break;
+            case R_VIBE:
+                vibeMode = o.idx;
+                if (vibeMode == 2 && vibrator != null) {
+                    try { vibrator.vibrate(VibrationEffect.createOneShot(60, 200)); } catch (Exception ignored) { }
+                } else if (vibeMode == 1) {
+                    performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+                }
+                break;
             case R_VOICE_TYPE:
             case R_VOICE_PITCH: {
                 if (o.row == R_VOICE_TYPE) voiceType = o.idx;
@@ -809,6 +840,152 @@ public final class InstrumentView extends View {
         relayout();
     }
 
+    // ---- shader cache (avoid allocating gradients every frame)
+    private final java.util.HashMap<Long, Shader> shaderCache = new java.util.HashMap<>();
+
+    private static long mix(long h, float v) {
+        return h * 1000003L ^ Float.floatToIntBits(v);
+    }
+
+    private Shader lin(float x0, float y0, float x1, float y1, int c0, int c1) {
+        long k = mix(mix(mix(mix(1, x0), y0), x1), y1) * 31 + ((long) c0 << 32 ^ (c1 & 0xFFFFFFFFL));
+        Shader sh = shaderCache.get(k);
+        if (sh == null) {
+            if (shaderCache.size() > 600) shaderCache.clear();
+            sh = new LinearGradient(x0, y0, x1, y1, c0, c1, Shader.TileMode.CLAMP);
+            shaderCache.put(k, sh);
+        }
+        return sh;
+    }
+
+    private Shader rad(float cx, float cy, float r, int c0, int c1) {
+        long k = mix(mix(mix(2, cx), cy), r) * 31 + ((long) c0 << 32 ^ (c1 & 0xFFFFFFFFL));
+        Shader sh = shaderCache.get(k);
+        if (sh == null) {
+            if (shaderCache.size() > 600) shaderCache.clear();
+            sh = new RadialGradient(cx, cy, r, c0, c1, Shader.TileMode.CLAMP);
+            shaderCache.put(k, sh);
+        }
+        return sh;
+    }
+
+    // ================================================================== FX: light + sound-pressure haptics
+    private static final String[] LIGHT_MODES = {"OFF", "タッチ", "タッチ＋音"};
+    private static final String[] VIBE_MODES = {"OFF", "タップ", "音圧"};
+    private static final long RIPPLE_MS = 380;
+    private int lightMode = 2, vibeMode = 1;
+    private Vibrator vibrator;
+    private final float[] rpx = new float[16], rpy = new float[16];
+    private final long[] rpt = new long[16];
+    private final int[] rpc = new int[16];
+    private int rpNext;
+    private long lastVibe;
+    private boolean fxRunning;
+    private final Paint fxPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+    /** Tap haptics only in "タップ" mode ("音圧" vibrates from the actual sound instead). */
+    private void haptic(int constant) {
+        if (vibeMode == 1) performHapticFeedback(constant);
+    }
+
+    private int modeColor() {
+        switch (mode) {
+            case MODE_DRUM: case MODE_PHONE: return 0xFFFF8A1E;
+            case MODE_VOICE: case MODE_TYPE: return CYAN;
+            default: return ACCENT;
+        }
+    }
+
+    private void ripple(float x, float y) {
+        if (lightMode > 0) {
+            int i = (rpNext++) & 15;
+            rpx[i] = x; rpy[i] = y; rpt[i] = SystemClock.uptimeMillis(); rpc[i] = modeColor();
+        }
+        kickFx();
+    }
+
+    private void kickFx() {
+        if (fxRunning || (lightMode == 0 && vibeMode != 2)) return;
+        fxRunning = true;
+        postOnAnimation(fxTick);
+    }
+
+    private final Runnable fxTick = new Runnable() {
+        @Override public void run() {
+            long now = SystemClock.uptimeMillis();
+            float lv = synth.level();
+            boolean rip = false;
+            for (long t : rpt) if (t != 0 && now - t < RIPPLE_MS) { rip = true; break; }
+            if (vibeMode == 2) vibeFor(lv, now);
+            boolean sound = lv > 0.004f;
+            if (rip || (lightMode == 2 && sound) || fxDrawn) invalidate();
+            if ((rip || sound) && isAttachedToWindow()) postOnAnimation(this);
+            else fxRunning = false;
+        }
+    };
+
+    private void vibeFor(float lv, long now) {
+        if (vibrator == null || now - lastVibe < 30) return;
+        float a = (lv - 0.05f) / 0.6f;
+        if (a <= 0) return;
+        lastVibe = now;
+        try {
+            if (vibrator.hasAmplitudeControl())
+                vibrator.vibrate(VibrationEffect.createOneShot(34, (int) Math.min(255, 25 + a * 230)));
+            else if (a > 0.35f)
+                vibrator.vibrate(VibrationEffect.createOneShot(26, VibrationEffect.DEFAULT_AMPLITUDE));
+        } catch (Exception ignored) {
+        }
+    }
+
+    private boolean fxDrawn;
+
+    private void drawFx(Canvas c) {
+        fxDrawn = false;
+        if (lightMode == 0) return;
+        long now = SystemClock.uptimeMillis();
+        fxPaint.setShader(null);
+        if (lightMode == 2) { // whole keyboard glows with the sound level
+            float lv = Math.min(1f, synth.level() * 1.6f);
+            if (lv > 0.01f) {
+                fxDrawn = true;
+                int col = modeColor() & 0x00FFFFFF;
+                fxPaint.setStyle(Paint.Style.FILL);
+                fxPaint.setColor(((int) (lv * 46) << 24) | col);
+                c.drawRect(body, fxPaint);
+                fxPaint.setColor(((int) (lv * 235) << 24) | col);
+                c.drawRect(body.left, body.top, body.right, body.top + (1.5f + 4f * lv) * dp, fxPaint);
+                fxPaint.setStyle(Paint.Style.STROKE);
+                fxPaint.setStrokeWidth((1f + 3f * lv) * dp);
+                fxPaint.setColor(((int) (lv * 150) << 24) | col);
+                c.drawRect(body.left + dp, body.top + dp, body.right - dp, body.bottom - dp, fxPaint);
+            }
+        }
+        for (int i = 0; i < 16; i++) { // touch ripples
+            long age = now - rpt[i];
+            if (rpt[i] == 0 || age >= RIPPLE_MS) continue;
+            fxDrawn = true;
+            float p = age / (float) RIPPLE_MS;
+            float e = 1f - (1f - p) * (1f - p);
+            float rad = (8f + 64f * e) * dp;
+            int col = rpc[i] & 0x00FFFFFF;
+            fxPaint.setStyle(Paint.Style.FILL);
+            fxPaint.setColor(((int) (60 * (1 - p)) << 24) | col);
+            c.drawCircle(rpx[i], rpy[i], rad * 0.8f, fxPaint);
+            fxPaint.setStyle(Paint.Style.STROKE);
+            fxPaint.setStrokeWidth((1f + 3.5f * (1 - p)) * dp);
+            fxPaint.setColor(((int) (230 * (1 - p)) << 24) | col);
+            c.drawCircle(rpx[i], rpy[i], rad, fxPaint);
+        }
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        removeCallbacks(fxTick);
+        fxRunning = false;
+        super.onDetachedFromWindow();
+    }
+
     // ================================================================== drawing
     @Override
     protected void onDraw(Canvas c) {
@@ -817,6 +994,7 @@ public final class InstrumentView extends View {
         c.translate(insetL, 0);
         c.clipRect(0, 0, cw, ch);
         drawContent(c);
+        drawFx(c);
         c.restore();
     }
 
@@ -894,7 +1072,7 @@ public final class InstrumentView extends View {
             fill.setShader(null);
             fill.setColor(on ? ACCENT : 0xFF232634);
             c.drawRoundRect(sectionTabs[i], 8 * dp, 8 * dp, fill);
-            text.setTextSize(11.5f * dp);
+            text.setTextSize(Math.min(11f * dp, sectionTabs[i].width() / 4.6f));
             text.setColor(on ? 0xFF0D0E14 : 0xFFDDE0EA);
             centerText(c, SECTION_NAMES[i], sectionTabs[i].centerX(), sectionTabs[i].centerY());
         }
@@ -942,7 +1120,7 @@ public final class InstrumentView extends View {
     private void cymbal(Canvas c, KitPiece k, float f) {
         float cx = k.cx, cy = k.cy, r = k.r;
         int hi = blend(0xFFF0CF6A, 0xFFFFF0B0, f), lo = blend(0xFFA87A22, 0xFFE0A040, f);
-        fill.setShader(new RadialGradient(cx - r * 0.25f, cy - r * 0.3f, r * 1.3f, hi, lo, Shader.TileMode.CLAMP));
+        fill.setShader(rad(cx - r * 0.25f, cy - r * 0.3f, r * 1.3f, hi, lo));
         c.drawCircle(cx, cy, r, fill);
         fill.setShader(null);
         stroke.setStrokeWidth(0.8f * dp);
@@ -960,8 +1138,8 @@ public final class InstrumentView extends View {
         long now = SystemClock.uptimeMillis();
         boolean anim = false;
         // floor rug
-        fill.setShader(new RadialGradient(body.centerX(), body.bottom, body.width() * 0.6f,
-                0xFF2A1A1E, BG, Shader.TileMode.CLAMP));
+        fill.setShader(rad(body.centerX(), body.bottom, body.width() * 0.6f,
+                0xFF2A1A1E, BG));
         c.drawRect(body, fill);
         fill.setShader(null);
         for (KitPiece k : kit) {
@@ -981,8 +1159,8 @@ public final class InstrumentView extends View {
                     stroke.setPathEffect(null);
                     break;
                 case K_BELL: {
-                    fill.setShader(new LinearGradient(cx, cy - r, cx, cy + r,
-                            blend(0xFF9AA0A8, 0xFFFFD08A, f), blend(0xFF4C5158, 0xFFFF7A00, f), Shader.TileMode.CLAMP));
+                    fill.setShader(lin(cx, cy - r, cx, cy + r,
+                            blend(0xFF9AA0A8, 0xFFFFD08A, f), blend(0xFF4C5158, 0xFFFF7A00, f)));
                     tmp.set(cx - r * 0.8f, cy - r, cx + r * 0.8f, cy + r);
                     c.drawRoundRect(tmp, r * 0.35f, r * 0.35f, fill);
                     fill.setShader(null);
@@ -1000,15 +1178,15 @@ public final class InstrumentView extends View {
                 default: { // drums (and kick): shell, hoop, head, lugs
                     boolean kick = k.kind == K_KICK, snare = k.drum == SynthCore.SNARE;
                     int shellHi = snare ? 0xFFD5D9DF : 0xFFB0303C, shellLo = snare ? 0xFF7D838C : 0xFF5E1219;
-                    fill.setShader(new LinearGradient(cx, cy - r, cx, cy + r, shellHi, shellLo, Shader.TileMode.CLAMP));
+                    fill.setShader(lin(cx, cy - r, cx, cy + r, shellHi, shellLo));
                     c.drawCircle(cx, cy, r, fill);
                     fill.setShader(null);
                     stroke.setColor(0xFFC9CED5); // hoop
                     stroke.setStrokeWidth(2f * dp);
                     c.drawCircle(cx, cy, r * 0.90f, stroke);
                     int headHi = kick ? 0xFF3A3A40 : 0xFFF2EEE3, headLo = kick ? 0xFF1C1C20 : 0xFFCFC8B6;
-                    fill.setShader(new RadialGradient(cx - r * 0.2f, cy - r * 0.25f, r,
-                            blend(headHi, 0xFFFFD08A, f), blend(headLo, 0xFFFF8A1E, f * 0.8f), Shader.TileMode.CLAMP));
+                    fill.setShader(rad(cx - r * 0.2f, cy - r * 0.25f, r,
+                            blend(headHi, 0xFFFFD08A, f), blend(headLo, 0xFFFF8A1E, f * 0.8f)));
                     c.drawCircle(cx, cy, r * 0.86f, fill);
                     fill.setShader(null);
                     fill.setColor(0xFFDDE1E6);
@@ -1108,7 +1286,7 @@ public final class InstrumentView extends View {
             }
         }
         if (synthMode) {
-            fill.setShader(new LinearGradient(0, body.top, 0, body.bottom, CYAN, 0x00000000, Shader.TileMode.CLAMP));
+            fill.setShader(lin(0, body.top, 0, body.bottom, CYAN, 0x00000000));
             c.drawRect(0, body.top, 3 * dp, body.bottom, fill);
             fill.setShader(null);
             for (int i = 0; i < touches.size(); i++) {
@@ -1213,7 +1391,7 @@ public final class InstrumentView extends View {
         c.drawRect(body, fill);
         // green casing
         float fr = 16 * dp;
-        fill.setShader(new LinearGradient(0, phoneFrame.top, 0, phoneFrame.bottom, PHONE_GREEN_HI, PHONE_GREEN_LO, Shader.TileMode.CLAMP));
+        fill.setShader(lin(0, phoneFrame.top, 0, phoneFrame.bottom, PHONE_GREEN_HI, PHONE_GREEN_LO));
         c.drawRoundRect(phoneFrame, fr, fr, fill);
         fill.setShader(null);
         stroke.setColor(0x55FFFFFF);
@@ -1238,7 +1416,7 @@ public final class InstrumentView extends View {
         fill.setColor(0xFF4A4642);
         tmp.set(phoneDisplay.left - 2 * dp, phoneDisplay.top - 2 * dp, phoneDisplay.right + 2 * dp, phoneDisplay.bottom + 2 * dp);
         c.drawRoundRect(tmp, lr, lr, fill);
-        fill.setShader(new LinearGradient(0, phoneDisplay.top, 0, phoneDisplay.bottom, 0xFFB7C7AE, 0xFF9DB094, Shader.TileMode.CLAMP));
+        fill.setShader(lin(0, phoneDisplay.top, 0, phoneDisplay.bottom, 0xFFB7C7AE, 0xFF9DB094));
         c.drawRoundRect(phoneDisplay, lr, lr, fill);
         fill.setShader(null);
         if (dialed.length() == 0) {
@@ -1265,7 +1443,7 @@ public final class InstrumentView extends View {
         RectF[] small = {phoneClear, phoneDel};
         String[] smallLb = {"C", "⌫"};
         for (int i = 0; i < 2; i++) {
-            fill.setShader(new LinearGradient(0, small[i].top, 0, small[i].bottom, 0xFFD9DCDF, 0xFF8F959C, Shader.TileMode.CLAMP));
+            fill.setShader(lin(0, small[i].top, 0, small[i].bottom, 0xFFD9DCDF, 0xFF8F959C));
             c.drawRoundRect(small[i], 6 * dp, 6 * dp, fill);
             fill.setShader(null);
             text.setTextSize(small[i].height() * 0.5f);
@@ -1297,7 +1475,7 @@ public final class InstrumentView extends View {
                 c.drawCircle(cx, cy, rad * 1.5f, fill);
             }
             // outer silver rim
-            fill.setShader(new LinearGradient(cx, cy - rad, cx, cy + rad, 0xFFF2F3F5, 0xFF7E848C, Shader.TileMode.CLAMP));
+            fill.setShader(lin(cx, cy - rad, cx, cy + rad, 0xFFF2F3F5, 0xFF7E848C));
             c.drawCircle(cx, cy, rad, fill);
             // thick black ring
             fill.setShader(null);
@@ -1307,7 +1485,7 @@ public final class InstrumentView extends View {
             float fr2 = rad * 0.70f;
             int top = blend(0xFFF6F7F8, 0xFFFFD08A, glow);
             int bottom = blend(0xFFA2A8AF, 0xFFFF7A00, glow);
-            fill.setShader(new LinearGradient(cx, cy - fr2, cx, cy + fr2, top, bottom, Shader.TileMode.CLAMP));
+            fill.setShader(lin(cx, cy - fr2, cx, cy + fr2, top, bottom));
             c.drawCircle(cx, cy, fr2, fill);
             fill.setShader(null);
             fill.setColor(down ? 0x30FFFFFF : 0x60FFFFFF);
@@ -1434,6 +1612,7 @@ public final class InstrumentView extends View {
 
     private void down(int id, float x, float y) {
         if (y > ch || x < 0 || x > cw) return; // behind the navigation bar / side insets
+        if (y > barH && !menuOpen) ripple(x, y);
         Touch t = new Touch();
         Btn b = hitBar(x, y);
         if (b != null) {
@@ -1446,7 +1625,7 @@ public final class InstrumentView extends View {
             } else {
                 pressButton(b.id);
             }
-            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            haptic(HapticFeedbackConstants.KEYBOARD_TAP);
             return;
         }
         if (menuOpen) {
@@ -1454,7 +1633,7 @@ public final class InstrumentView extends View {
                 if (sectionTabs[i].contains(x, y)) {
                     t.type = 5;
                     touches.put(id, t);
-                    performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+                    haptic(HapticFeedbackConstants.KEYBOARD_TAP);
                     menuSection = i;
                     layoutMenu();
                     invalidate();
@@ -1465,7 +1644,7 @@ public final class InstrumentView extends View {
                 if (o.r.contains(x, y)) {
                     t.type = 5;
                     touches.put(id, t);
-                    performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+                    haptic(HapticFeedbackConstants.KEYBOARD_TAP);
                     pressOpt(o);
                     return;
                 }
@@ -1475,7 +1654,7 @@ public final class InstrumentView extends View {
         if (mode == MODE_VOICE) {
             if (voiceDisplay.contains(x, y)) { // tap the transcription to clear it
                 voiceBuf.clear();
-                performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+                haptic(HapticFeedbackConstants.KEYBOARD_TAP);
                 invalidate();
                 return;
             }
@@ -1484,7 +1663,7 @@ public final class InstrumentView extends View {
                 t.type = 7;
                 t.tkey = k;
                 touches.put(id, t);
-                performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+                haptic(HapticFeedbackConstants.KEYBOARD_TAP);
                 pressVoice(t, k);
                 invalidate();
                 return;
@@ -1501,7 +1680,7 @@ public final class InstrumentView extends View {
                 } else {
                     dialed.setLength(0);
                 }
-                performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+                haptic(HapticFeedbackConstants.KEYBOARD_TAP);
                 invalidate();
                 return;
             }
@@ -1516,7 +1695,7 @@ public final class InstrumentView extends View {
                 if (dialed.length() > 40) dialed.delete(0, dialed.length() - 40);
                 dialed.append(PHONE_KEYS[i]);
                 if (textOut) host.onCommit(PHONE_KEYS[i]);
-                performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+                haptic(HapticFeedbackConstants.VIRTUAL_KEY);
                 invalidate();
                 return;
             }
@@ -1528,7 +1707,7 @@ public final class InstrumentView extends View {
             t.type = 4;
             t.tkey = k;
             touches.put(id, t);
-            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            haptic(HapticFeedbackConstants.KEYBOARD_TAP);
             if (isDialKey(k)) {
                 if (dtmf) {
                     t.voiceKey = synth.newKey();
@@ -1561,7 +1740,7 @@ public final class InstrumentView extends View {
                 k.flash = SystemClock.uptimeMillis();
                 t.type = 2;
                 touches.put(id, t);
-                performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+                haptic(HapticFeedbackConstants.VIRTUAL_KEY);
                 if (textOut) host.onCommit(DRUM_TEXT[drum]);
                 invalidate();
                 return;
@@ -1579,7 +1758,7 @@ public final class InstrumentView extends View {
             padFlash[p] = SystemClock.uptimeMillis();
             t.type = 2;
             touches.put(id, t);
-            performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+            haptic(HapticFeedbackConstants.VIRTUAL_KEY);
             if (textOut) host.onCommit(DRUM_TEXT[drum]);
             invalidate();
             return;
@@ -1592,7 +1771,7 @@ public final class InstrumentView extends View {
         t.y = y;
         touches.put(id, t);
         startNote(t, k, y);
-        performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+        haptic(HapticFeedbackConstants.KEYBOARD_TAP);
         invalidate();
     }
 
