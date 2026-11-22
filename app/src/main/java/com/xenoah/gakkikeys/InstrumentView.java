@@ -96,7 +96,7 @@ public final class InstrumentView extends View {
     /** Red / orange / yellow / cream, like the TR-808 step buttons. */
     private static final int[] PAD_808_COLORS = {0xFFE5452F, 0xFFF08A24, 0xFFF2CF3C, 0xFFEDE6D3};
 
-    private static final int MODE_DRUM = 0, MODE_KEYS = 1, MODE_TYPE = 3, MODE_PHONE = 4;
+    private static final int MODE_DRUM = 0, MODE_KEYS = 1, MODE_TYPE = 3, MODE_PHONE = 4, MODE_VOICE = 5;
     private static final int PAGE_LETTERS = 0, PAGE_NUM = 1, PAGE_SYM = 2;
 
     /** Sounds selectable for 🎹: 0 = piano, 1.. = synth presets. */
@@ -111,7 +111,7 @@ public final class InstrumentView extends View {
 
     // bar button ids
     private static final int B_DRUM = 1, B_KEYS = 2, B_TYPE = 3, B_OCT_DN = 4, B_OCT = 5, B_OCT_UP = 6,
-            B_SUS = 7, B_MENU = 8, B_TXT = 9, B_GLOBE = 10, B_HIDE = 11, B_PHONE = 12;
+            B_SUS = 7, B_MENU = 8, B_TXT = 9, B_GLOBE = 10, B_HIDE = 11, B_PHONE = 12, B_VOICE = 13;
 
     private static final class Btn {
         final int id;
@@ -140,7 +140,7 @@ public final class InstrumentView extends View {
     }
 
     private static final class Touch {
-        int type; // 1 note, 2 drum, 3 bar button, 4 typing key, 5 menu, 6 phone key
+        int type; // 1 note, 2 drum, 3 bar button, 4 typing key, 5 menu, 6 phone key, 7 voice key
         int midi;
         int voiceKey;
         int btn;
@@ -168,6 +168,14 @@ public final class InstrumentView extends View {
     private int padLayout;
     private int drumVelMode;
     private int phoneVolIdx;
+    private int voicePitchIdx;
+    private static final String[] VOICE_PITCHES = {"低い", "普通", "高い"};
+    private static final float[] VOICE_F0 = {92f, 128f, 200f};
+
+    // 🗣 voice (English IPA) mode
+    private final List<TKey> vkeys = new ArrayList<>();
+    private final List<String> voiceBuf = new ArrayList<>();
+    private final RectF voiceDisplay = new RectF();
 
     private boolean kanaLang = true;
     private int page = PAGE_LETTERS;
@@ -244,7 +252,7 @@ public final class InstrumentView extends View {
         prefs = ctx.getSharedPreferences("gakki", Context.MODE_PRIVATE);
         mode = prefs.getInt("mode", MODE_KEYS);
         if (mode == 2) { mode = MODE_KEYS; sound = 1 + prefs.getInt("preset", 0); } // old SYNTH tab
-        if (mode != MODE_DRUM && mode != MODE_KEYS && mode != MODE_TYPE && mode != MODE_PHONE) mode = MODE_KEYS;
+        if (mode != MODE_DRUM && mode != MODE_KEYS && mode != MODE_TYPE && mode != MODE_PHONE && mode != MODE_VOICE) mode = MODE_KEYS;
         octave = prefs.getInt("octave", 4);
         sound = prefs.getInt("sound", sound);
         widthIdx = prefs.getInt("width", 0);
@@ -255,6 +263,7 @@ public final class InstrumentView extends View {
         padLayout = clamp(prefs.getInt("drumLayout", 0), 0, PAD_LAYOUT_NAMES.length - 1);
         drumVelMode = clamp(prefs.getInt("drumVel", 0), 0, 1);
         phoneVolIdx = clamp(prefs.getInt("phoneVol", 2), 0, PHONE_VOLS.length - 1);
+        voicePitchIdx = clamp(prefs.getInt("voicePitch", 1), 0, VOICE_PITCHES.length - 1);
         textOut = prefs.getBoolean("text", false);
         kanaLang = prefs.getBoolean("kana", true);
         sound = clamp(sound, 0, SOUNDS.length - 1);
@@ -295,7 +304,7 @@ public final class InstrumentView extends View {
         prefs.edit().putInt("mode", mode).putInt("octave", octave).putInt("sound", sound)
                 .putInt("width", widthIdx).putInt("labels", labelIdx).putInt("seVol", seVolIdx)
                 .putInt("seSeed", seSeed).putInt("drumLayout", padLayout).putInt("drumVel", drumVelMode)
-                .putInt("phoneVol", phoneVolIdx).putBoolean("dtmf", dtmf).putBoolean("text", textOut).apply();
+                .putInt("phoneVol", phoneVolIdx).putInt("voicePitch", voicePitchIdx).putBoolean("dtmf", dtmf).putBoolean("text", textOut).apply();
     }
 
     // ================================================================== layout
@@ -351,6 +360,7 @@ public final class InstrumentView extends View {
         layoutKeys();
         layoutTyping();
         layoutPhone();
+        layoutVoice();
         layoutMenu();
         invalidate();
     }
@@ -381,12 +391,122 @@ public final class InstrumentView extends View {
         phoneGrille.set(lx, phoneDel.bottom + pad, rx, phonePlate.bottom - pad);
     }
 
+    private void layoutVoice() {
+        vkeys.clear();
+        float gap = 2 * dp;
+        float rowH = (body.height() - gap) / 5f;
+        float y0 = body.top + gap;
+        String[] r0 = new String[10], r1 = new String[10], r2 = new String[10], r3 = new String[10];
+        System.arraycopy(Speech.VOWELS, 0, r0, 0, 10);
+        r1[0] = Speech.VOWELS[10]; r1[1] = Speech.VOWELS[11];
+        System.arraycopy(Speech.DIPHTHONGS, 0, r1, 2, 8);
+        System.arraycopy(Speech.CONSONANTS, 0, r2, 0, 10);
+        System.arraycopy(Speech.CONSONANTS, 10, r3, 0, 10);
+        String[][] rows = {r0, r1, r2, r3};
+        for (int r = 0; r < 4; r++) {
+            float u = body.width() / 10f;
+            for (int i = 0; i < 10; i++) {
+                TKey k = new TKey(rows[r][i]);
+                k.r.set(body.left + i * u, y0 + r * rowH, body.left + (i + 1) * u, y0 + (r + 1) * rowH);
+                vkeys.add(k);
+            }
+        }
+        String[] last = {"l", "r", "j", "w", Speech.STRESS, "VSP", "VDISP", "VDEL", "VPLAY"};
+        float[] w = {1, 1, 1, 1, 1, 1, 2.6f, 1.1f, 1.3f};
+        float total = 0;
+        for (float f : w) total += f;
+        float u = body.width() / total, x = body.left;
+        for (int i = 0; i < last.length; i++) {
+            TKey k = new TKey(last[i]);
+            k.r.set(x, y0 + 4 * rowH, x + w[i] * u, y0 + 5 * rowH);
+            x += w[i] * u;
+            if (last[i].equals("VDISP")) voiceDisplay.set(k.r);
+            else vkeys.add(k);
+        }
+    }
+
+    private static boolean isVoiceVowel(String p) {
+        for (String s : Speech.VOWELS) if (s.equals(p)) return true;
+        for (String s : Speech.DIPHTHONGS) if (s.equals(p)) return true;
+        return false;
+    }
+
+    private void drawVoice(Canvas c) {
+        float r = 6 * dp, in = 2 * dp;
+        for (TKey k : vkeys) {
+            boolean down = false;
+            for (int i = 0; i < touches.size(); i++) if (touches.valueAt(i).tkey == k) down = true;
+            boolean fn = k.code.startsWith("V") && k.code.length() > 2;
+            boolean vowel = isVoiceVowel(k.code);
+            boolean diph = vowel && k.code.length() == 2 && !k.code.endsWith("ː");
+            int col = down ? ACCENT
+                    : k.code.equals("VPLAY") ? 0xFF2A6F86
+                    : fn || k.code.equals(Speech.STRESS) ? 0xFF262A3A
+                    : diph ? 0xFF4A3466 : vowel ? 0xFF5A2E48 : 0xFF2D3C52;
+            fill.setShader(null);
+            fill.setColor(col);
+            tmp.set(k.r.left + in, k.r.top + in, k.r.right - in, k.r.bottom - in);
+            c.drawRoundRect(tmp, r, r, fill);
+            String lb = k.code.equals("VSP") ? "␣" : k.code.equals("VDEL") ? "⌫" : k.code.equals("VPLAY") ? "▶" : k.code;
+            text.setTypeface(Typeface.DEFAULT);
+            text.setTextSize(Math.min(19 * dp, tmp.height() * 0.5f));
+            text.setColor(0xFFF2F3F8);
+            centerText(c, lb, tmp.centerX(), tmp.centerY());
+        }
+        text.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
+        // transcription display
+        tmp.set(voiceDisplay.left + in, voiceDisplay.top + in, voiceDisplay.right - in, voiceDisplay.bottom - in);
+        fill.setColor(0xFF0A0B10);
+        c.drawRoundRect(tmp, r, r, fill);
+        stroke.setColor(0xFF33384A);
+        stroke.setStrokeWidth(1 * dp);
+        c.drawRoundRect(tmp, r, r, stroke);
+        StringBuilder sb = new StringBuilder("/");
+        for (String p : voiceBuf) sb.append(p);
+        sb.append("/");
+        String t = voiceBuf.isEmpty() ? "/ˈ…/" : sb.toString();
+        text.setTypeface(Typeface.DEFAULT);
+        text.setTextAlign(Paint.Align.RIGHT);
+        text.setTextSize(Math.min(16 * dp, tmp.height() * 0.45f));
+        text.setColor(voiceBuf.isEmpty() ? 0xFF4A5068 : CYAN);
+        float maxW = tmp.width() - 8 * dp;
+        while (text.measureText(t) > maxW && t.length() > 2) t = "…" + t.substring(2);
+        c.drawText(t, tmp.right - 4 * dp, tmp.centerY() - (text.descent() + text.ascent()) / 2, text);
+        text.setTextAlign(Paint.Align.CENTER);
+        text.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
+    }
+
+    private void pressVoice(Touch t, TKey k) {
+        float f0 = VOICE_F0[voicePitchIdx];
+        switch (k.code) {
+            case "VPLAY":
+                if (!voiceBuf.isEmpty()) synth.speech().say(new ArrayList<>(voiceBuf), f0);
+                return;
+            case "VDEL":
+                if (!voiceBuf.isEmpty()) voiceBuf.remove(voiceBuf.size() - 1);
+                if (textOut) host.onTypeKey("DEL", false);
+                return;
+            case "VSP":
+                voiceBuf.add(" ");
+                if (textOut) host.onCommit(" ");
+                return;
+        }
+        if (voiceBuf.size() > 60) voiceBuf.remove(0);
+        voiceBuf.add(k.code);
+        if (textOut) host.onCommit(k.code);
+        if (!k.code.equals(Speech.STRESS)) {
+            t.voiceKey = synth.newKey();
+            synth.speech().hold(t.voiceKey, k.code, f0);
+        }
+    }
+
     private void layoutBar() {
         bar.clear();
         float tabW = mode == MODE_KEYS ? 1.0f : 1.35f;
         bar.add(new Btn(B_DRUM, tabW));
         bar.add(new Btn(B_KEYS, tabW));
         bar.add(new Btn(B_PHONE, tabW));
+        bar.add(new Btn(B_VOICE, tabW));
         bar.add(new Btn(B_TYPE, tabW));
         if (mode == MODE_KEYS) {
             bar.add(new Btn(B_OCT_DN, 0.75f));
@@ -529,16 +649,17 @@ public final class InstrumentView extends View {
     }
 
     // ------------------------------------------------------------------ menu (sectioned per tab)
-    private static final String[] SECTION_NAMES = {"🥁 ドラム", "🎹 鍵盤", "☎ 電話機", "⌨ 文字入力"};
+    private static final String[] SECTION_NAMES = {"🥁ドラム", "🎹鍵盤", "☎電話", "🗣声", "⌨文字"};
     private static final int R_PAD_LAYOUT = 0, R_DRUM_VEL = 1, R_SOUND = 2, R_WIDTH = 3, R_LABEL = 4,
-            R_PHONE_VOL = 5, R_SE = 6, R_DTMF = 7;
-    private static final String[] ROW_LABELS = {"配置", "強弱", "音色", "幅", "表示", "音量", "タイプ音", "テンキー音"};
+            R_PHONE_VOL = 5, R_SE = 6, R_DTMF = 7, R_VOICE_PITCH = 8;
+    private static final String[] ROW_LABELS = {"配置", "強弱", "音色", "幅", "表示", "音量", "タイプ音", "テンキー音", "声の高さ"};
     private static final int[][] SECTION_ROWS = {
             {R_PAD_LAYOUT, R_DRUM_VEL},
             {R_SOUND, R_WIDTH, R_LABEL},
             {R_PHONE_VOL},
+            {R_VOICE_PITCH},
             {R_SE, R_DTMF}};
-    private final RectF[] sectionTabs = {new RectF(), new RectF(), new RectF(), new RectF()};
+    private final RectF[] sectionTabs = {new RectF(), new RectF(), new RectF(), new RectF(), new RectF()};
 
     private int[] padMap() {
         return PAD_LAYOUTS[padLayout == 2 ? 1 : 0];
@@ -552,7 +673,8 @@ public final class InstrumentView extends View {
         switch (mode) {
             case MODE_DRUM: return 0;
             case MODE_PHONE: return 2;
-            case MODE_TYPE: return 3;
+            case MODE_VOICE: return 3;
+            case MODE_TYPE: return 4;
             default: return 1;
         }
     }
@@ -566,6 +688,7 @@ public final class InstrumentView extends View {
             case R_LABEL: return LABELS;
             case R_PHONE_VOL: return PHONE_VOLS;
             case R_SE: return SE_VOLS;
+            case R_VOICE_PITCH: return VOICE_PITCHES;
             default: return ONOFF;
         }
     }
@@ -579,6 +702,7 @@ public final class InstrumentView extends View {
             case R_LABEL: return labelIdx;
             case R_PHONE_VOL: return phoneVolIdx;
             case R_SE: return seVolIdx;
+            case R_VOICE_PITCH: return voicePitchIdx;
             default: return dtmf ? 0 : 1;
         }
     }
@@ -591,8 +715,8 @@ public final class InstrumentView extends View {
         opts.clear();
         float pad = 6 * dp;
         float tabH = sectionTabH();
-        float tw = (body.width() - pad * 2) / 4f;
-        for (int i = 0; i < 4; i++)
+        float tw = (body.width() - pad * 2) / SECTION_NAMES.length;
+        for (int i = 0; i < SECTION_NAMES.length; i++)
             sectionTabs[i].set(body.left + pad + i * tw + 2 * dp, body.top + pad,
                     body.left + pad + (i + 1) * tw - 2 * dp, body.top + pad + tabH);
         int[] rows = SECTION_ROWS[menuSection];
@@ -642,6 +766,13 @@ public final class InstrumentView extends View {
                 }
                 break;
             case R_DTMF: dtmf = o.idx == 0; break;
+            case R_VOICE_PITCH: {
+                voicePitchIdx = o.idx;
+                List<String> demo = new ArrayList<>();
+                demo.add("h"); demo.add("ə"); demo.add(Speech.STRESS); demo.add("l"); demo.add("əʊ");
+                synth.speech().say(demo, VOICE_F0[voicePitchIdx]);
+                break;
+            }
         }
         save();
         relayout();
@@ -665,6 +796,7 @@ public final class InstrumentView extends View {
         else if (mode == MODE_DRUM) animating = realKit() ? drawKit(c) : drawPads(c);
         else if (mode == MODE_TYPE) drawTyping(c);
         else if (mode == MODE_PHONE) animating = drawPhone(c);
+        else if (mode == MODE_VOICE) drawVoice(c);
         else drawKeys(c, !isPiano());
         if (animating) postInvalidateOnAnimation();
     }
@@ -679,6 +811,7 @@ public final class InstrumentView extends View {
             case B_KEYS: return "🎹";
             case B_TYPE: return "⌨";
             case B_PHONE: return "☎";
+            case B_VOICE: return "🗣";
             case B_OCT_DN: return "◀";
             case B_OCT: return "C" + octave;
             case B_OCT_UP: return "▶";
@@ -697,6 +830,7 @@ public final class InstrumentView extends View {
             case B_KEYS: return mode == MODE_KEYS;
             case B_TYPE: return mode == MODE_TYPE;
             case B_PHONE: return mode == MODE_PHONE;
+            case B_VOICE: return mode == MODE_VOICE;
             case B_SUS: return sustain;
             case B_TXT: return textOut;
             case B_MENU: return menuOpen;
@@ -710,12 +844,12 @@ public final class InstrumentView extends View {
         c.drawRect(0, 0, cw, barH, fill);
         for (Btn b : bar) {
             boolean on = isOn(b);
-            boolean tab = b.id <= B_TYPE || b.id == B_PHONE;
+            boolean tab = b.id <= B_TYPE || b.id == B_PHONE || b.id == B_VOICE;
             if (b.id != B_OCT) {
                 fill.setColor(on ? (tab ? ACCENT : CYAN) : 0xFF232634);
                 c.drawRoundRect(b.r, 8 * dp, 8 * dp, fill);
             }
-            text.setTextSize((tab ? 17f : 12.5f) * dp);
+            text.setTextSize((tab ? 16f : 12.5f) * dp);
             text.setColor(on ? 0xFF0D0E14 : (b.id == B_OCT ? CYAN : 0xFFDDE0EA));
             centerText(c, label(b), b.r.centerX(), b.r.centerY());
         }
@@ -724,12 +858,12 @@ public final class InstrumentView extends View {
     private void drawMenu(Canvas c) {
         float pad = 6 * dp;
         // section tabs
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < SECTION_NAMES.length; i++) {
             boolean on = i == menuSection;
             fill.setShader(null);
             fill.setColor(on ? ACCENT : 0xFF232634);
             c.drawRoundRect(sectionTabs[i], 8 * dp, 8 * dp, fill);
-            text.setTextSize(12.5f * dp);
+            text.setTextSize(11.5f * dp);
             text.setColor(on ? 0xFF0D0E14 : 0xFFDDE0EA);
             centerText(c, SECTION_NAMES[i], sectionTabs[i].centerX(), sectionTabs[i].centerY());
         }
@@ -1265,7 +1399,7 @@ public final class InstrumentView extends View {
             return;
         }
         if (menuOpen) {
-            for (int i = 0; i < 4; i++) {
+            for (int i = 0; i < SECTION_NAMES.length; i++) {
                 if (sectionTabs[i].contains(x, y)) {
                     t.type = 5;
                     touches.put(id, t);
@@ -1284,6 +1418,25 @@ public final class InstrumentView extends View {
                     pressOpt(o);
                     return;
                 }
+            }
+            return;
+        }
+        if (mode == MODE_VOICE) {
+            if (voiceDisplay.contains(x, y)) { // tap the transcription to clear it
+                voiceBuf.clear();
+                performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+                invalidate();
+                return;
+            }
+            for (TKey k : vkeys) {
+                if (!k.r.contains(x, y)) continue;
+                t.type = 7;
+                t.tkey = k;
+                touches.put(id, t);
+                performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+                pressVoice(t, k);
+                invalidate();
+                return;
             }
             return;
         }
@@ -1426,6 +1579,9 @@ public final class InstrumentView extends View {
             synth.noteOff(t.voiceKey);
             heldCount[t.midi] = Math.max(0, heldCount[t.midi] - 1);
             invalidate();
+        } else if (t.type == 7) {
+            if (t.voiceKey != 0) synth.speech().release(t.voiceKey);
+            invalidate();
         } else if (t.type == 6) {
             synth.noteOff(t.voiceKey);
             phoneLit[t.midi] = SystemClock.uptimeMillis();
@@ -1490,6 +1646,7 @@ public final class InstrumentView extends View {
             case B_KEYS: setMode(MODE_KEYS); break;
             case B_TYPE: setMode(MODE_TYPE); break;
             case B_PHONE: setMode(MODE_PHONE); break;
+            case B_VOICE: setMode(MODE_VOICE); break;
             case B_OCT_DN: if (octave > 1) { octave--; releaseAll(); save(); relayout(); } break;
             case B_OCT_UP: if (octave < maxOctave()) { octave++; releaseAll(); save(); relayout(); } break;
             case B_SUS: sustain = !sustain; synth.setSustain(sustain); break;
@@ -1538,6 +1695,7 @@ public final class InstrumentView extends View {
         for (int i = 0; i < touches.size(); i++) {
             Touch t = touches.valueAt(i);
             if ((t.type == 1 || t.type == 4 || t.type == 6) && t.voiceKey != 0) synth.noteOff(t.voiceKey);
+            if (t.type == 7 && t.voiceKey != 0) synth.speech().release(t.voiceKey);
         }
         touches.clear();
         removeCallbacks(delRepeat);

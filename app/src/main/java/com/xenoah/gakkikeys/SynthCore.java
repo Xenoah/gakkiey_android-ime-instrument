@@ -164,9 +164,16 @@ public final class SynthCore {
     private final int[] apIdx;
 
     private float[] mix = new float[0], send = new float[0];
+    private final Speech speech;
+
+    /** English-IPA formant voice. */
+    public Speech speech() {
+        return speech;
+    }
 
     public SynthCore(float sampleRate) {
         this.sr = sampleRate;
+        this.speech = new Speech(sampleRate);
         for (int i = 0; i < MAX_VOICES; i++) voices[i] = new Voice();
         int[] cl = {1116, 1188, 1277, 1356, 1422, 1491};
         comb = new float[cl.length][];
@@ -438,6 +445,8 @@ public final class SynthCore {
                 default: renderDrum(v, frames); break;
             }
         }
+
+        speech.render(mix, send, frames);
 
         for (int i = 0; i < frames; i++) {
             float wet = reverb(send[i]);
