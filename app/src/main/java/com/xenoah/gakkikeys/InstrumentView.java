@@ -1118,7 +1118,7 @@ public final class InstrumentView extends View {
             case "NUM": return "123";
             case "SYM2": return "#+=";
             case "ALPHA": return kanaLang ? "あいう" : "ABC";
-            case "LANG": return kanaLang ? "あ→A" : "A→あ";
+            case "LANG": return "あA";
             case "SPACE": return kanaLang ? (host.isComposing() ? "カナ" : "空白") : "space";
             case "ENTER": return host.isComposing() ? "確定" : "⏎";
         }
@@ -1145,7 +1145,21 @@ public final class InstrumentView extends View {
             c.drawRoundRect(tmp, r, r, fill);
             String lb = tLabel(k);
             text.setColor(0xFFF2F3F8);
-            if (dial) {
+            if (k.code.equals("LANG")) {
+                // "あ A" side by side, the active language lit (like Gboard)
+                float sz = Math.min(19 * dp, tmp.height() * 0.42f);
+                text.setTextSize(sz);
+                float gap = sz * 0.15f;
+                float wa = text.measureText("あ"), wA = text.measureText("A");
+                float x0 = tmp.centerX() - (wa + gap + wA) / 2f;
+                float by = tmp.centerY() - (text.descent() + text.ascent()) / 2;
+                text.setTextAlign(Paint.Align.LEFT);
+                text.setColor(kanaLang ? 0xFF7CFF4F : 0xFF6A7088);
+                c.drawText("あ", x0, by, text);
+                text.setColor(kanaLang ? 0xFF6A7088 : 0xFFF2F3F8);
+                c.drawText("A", x0 + wa + gap, by, text);
+                text.setTextAlign(Paint.Align.CENTER);
+            } else if (dial) {
                 int d = Character.isDigit(k.code.charAt(0)) ? k.code.charAt(0) - '0' : -1;
                 String sub = d >= 0 ? (d == 0 ? "+" : PHONE_SUB[d]) : "";
                 text.setTextSize(22 * dp);
