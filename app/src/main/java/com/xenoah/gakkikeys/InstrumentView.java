@@ -170,7 +170,14 @@ public final class InstrumentView extends View {
     private int phoneVolIdx;
     private int voicePitchIdx;
     private static final String[] VOICE_PITCHES = {"低い", "普通", "高い"};
-    private static final float[] VOICE_F0 = {92f, 128f, 200f};
+    private static final float[][] VOICE_F0S = {{92f, 128f, 170f}, {175f, 215f, 270f}}; // [male|female][low|mid|high]
+    private static final String[] VOICE_TYPES = {"男性", "女性"};
+    private int voiceType;
+
+    private float voiceF0() {
+        synth.speech().setVoice(voiceType);
+        return VOICE_F0S[voiceType][voicePitchIdx];
+    }
 
     // 🗣 voice (English IPA) mode
     private final List<TKey> vkeys = new ArrayList<>();
@@ -264,6 +271,7 @@ public final class InstrumentView extends View {
         drumVelMode = clamp(prefs.getInt("drumVel", 0), 0, 1);
         phoneVolIdx = clamp(prefs.getInt("phoneVol", 2), 0, PHONE_VOLS.length - 1);
         voicePitchIdx = clamp(prefs.getInt("voicePitch", 1), 0, VOICE_PITCHES.length - 1);
+        voiceType = clamp(prefs.getInt("voiceType", 0), 0, VOICE_TYPES.length - 1);
         textOut = prefs.getBoolean("text", false);
         kanaLang = prefs.getBoolean("kana", true);
         sound = clamp(sound, 0, SOUNDS.length - 1);
@@ -304,7 +312,7 @@ public final class InstrumentView extends View {
         prefs.edit().putInt("mode", mode).putInt("octave", octave).putInt("sound", sound)
                 .putInt("width", widthIdx).putInt("labels", labelIdx).putInt("seVol", seVolIdx)
                 .putInt("seSeed", seSeed).putInt("drumLayout", padLayout).putInt("drumVel", drumVelMode)
-                .putInt("phoneVol", phoneVolIdx).putInt("voicePitch", voicePitchIdx).putBoolean("dtmf", dtmf).putBoolean("text", textOut).apply();
+                .putInt("phoneVol", phoneVolIdx).putInt("voicePitch", voicePitchIdx).putInt("voiceType", voiceType).putBoolean("dtmf", dtmf).putBoolean("text", textOut).apply();
     }
 
     // ================================================================== layout
@@ -477,7 +485,7 @@ public final class InstrumentView extends View {
     }
 
     private void pressVoice(Touch t, TKey k) {
-        float f0 = VOICE_F0[voicePitchIdx];
+        float f0 = voiceF0();
         switch (k.code) {
             case "VPLAY":
                 if (!voiceBuf.isEmpty()) synth.speech().say(new ArrayList<>(voiceBuf), f0);
@@ -651,13 +659,13 @@ public final class InstrumentView extends View {
     // ------------------------------------------------------------------ menu (sectioned per tab)
     private static final String[] SECTION_NAMES = {"🥁ドラム", "🎹鍵盤", "☎電話", "🗣声", "⌨文字"};
     private static final int R_PAD_LAYOUT = 0, R_DRUM_VEL = 1, R_SOUND = 2, R_WIDTH = 3, R_LABEL = 4,
-            R_PHONE_VOL = 5, R_SE = 6, R_DTMF = 7, R_VOICE_PITCH = 8;
-    private static final String[] ROW_LABELS = {"配置", "強弱", "音色", "幅", "表示", "音量", "タイプ音", "テンキー音", "声の高さ"};
+            R_PHONE_VOL = 5, R_SE = 6, R_DTMF = 7, R_VOICE_PITCH = 8, R_VOICE_TYPE = 9;
+    private static final String[] ROW_LABELS = {"配置", "強弱", "音色", "幅", "表示", "音量", "タイプ音", "テンキー音", "声の高さ", "声の種類"};
     private static final int[][] SECTION_ROWS = {
             {R_PAD_LAYOUT, R_DRUM_VEL},
             {R_SOUND, R_WIDTH, R_LABEL},
             {R_PHONE_VOL},
-            {R_VOICE_PITCH},
+            {R_VOICE_TYPE, R_VOICE_PITCH},
             {R_SE, R_DTMF}};
     private final RectF[] sectionTabs = {new RectF(), new RectF(), new RectF(), new RectF(), new RectF()};
 
@@ -689,6 +697,7 @@ public final class InstrumentView extends View {
             case R_PHONE_VOL: return PHONE_VOLS;
             case R_SE: return SE_VOLS;
             case R_VOICE_PITCH: return VOICE_PITCHES;
+            case R_VOICE_TYPE: return VOICE_TYPES;
             default: return ONOFF;
         }
     }
@@ -703,6 +712,7 @@ public final class InstrumentView extends View {
             case R_PHONE_VOL: return phoneVolIdx;
             case R_SE: return seVolIdx;
             case R_VOICE_PITCH: return voicePitchIdx;
+            case R_VOICE_TYPE: return voiceType;
             default: return dtmf ? 0 : 1;
         }
     }
@@ -766,11 +776,13 @@ public final class InstrumentView extends View {
                 }
                 break;
             case R_DTMF: dtmf = o.idx == 0; break;
+            case R_VOICE_TYPE:
             case R_VOICE_PITCH: {
-                voicePitchIdx = o.idx;
+                if (o.row == R_VOICE_TYPE) voiceType = o.idx;
+                else voicePitchIdx = o.idx;
                 List<String> demo = new ArrayList<>();
                 demo.add("h"); demo.add("ə"); demo.add(Speech.STRESS); demo.add("l"); demo.add("əʊ");
-                synth.speech().say(demo, VOICE_F0[voicePitchIdx]);
+                synth.speech().say(demo, voiceF0());
                 break;
             }
         }

@@ -166,6 +166,7 @@ public final class Speech {
         int key;
         boolean release;
         float f0;
+        boolean female;
     }
 
     private final ConcurrentLinkedQueue<Ev> queue = new ConcurrentLinkedQueue<>();
@@ -173,6 +174,14 @@ public final class Speech {
 
     public Speech(float sr) {
         this.sr = sr;
+    }
+
+    /** Voice types: 0 = male, 1 = female. */
+    public static final int MALE = 0, FEMALE = 1;
+    private volatile int voiceType = MALE;
+
+    public void setVoice(int type) {
+        voiceType = type;
     }
 
     /** Speak a token list (phonemes, "ˈ" stress marks, " " word breaks). */
@@ -220,6 +229,7 @@ public final class Speech {
         e.key = key;
         e.release = release;
         e.f0 = f0;
+        e.female = voiceType == FEMALE;
         queue.add(e);
     }
 
@@ -232,6 +242,8 @@ public final class Speech {
     private float f0Base = 120f, f0 = 120f;
     private double gph, vibPh;
     private float prevFlow;
+    /** Female: shorter vocal tract (formants x1.17), wider bandwidths, breathier, softer pulse. */
+    private float fScale = 1f, bwScale = 1f, breath = 0f, openQ = 0.4f, closeQ = 0.16f;
     private int seed = 0x2468ACE;
     // resonators: 0..2 formants, 3,4 fixed higher formants, 5 frication
     private final float[] ra = new float[6], rb = new float[6], rc = new float[6], y1 = new float[6], y2 = new float[6];
@@ -269,6 +281,12 @@ public final class Speech {
         released = false;
         fade = 1f;
         f0Base = e.f0;
+        boolean fem = e.female;
+        fScale = fem ? 1.17f : 1f;
+        bwScale = fem ? 1.25f : 1f;
+        breath = fem ? 0.06f : 0.012f;
+        openQ = fem ? 0.48f : 0.40f;
+        closeQ = fem ? 0.22f : 0.16f;
         total = 0;
         done = 0;
         if (active) for (Seg s : segs) total += Math.max(0, s.dur);
@@ -278,8 +296,8 @@ public final class Speech {
             f0 = f0Base;
             for (int i = 0; i < 6; i++) { y1[i] = 0; y2[i] = 0; }
         }
-        setRes(3, 3300, 250);
-        setRes(4, 3750, 200);
+        setRes(3, 3300 * fScale, 250 * bwScale);
+        setRes(4, 3750 * fScale, 200 * bwScale);
     }
 
     /** Mix speech into the given mono buffers. */
@@ -306,22 +324,22 @@ public final class Speech {
             if (vibPh >= 1) vibPh -= 1;
             float ff = f0 * (1f + 0.012f * (float) Math.sin(2 * Math.PI * vibPh));
             if ((i & 31) == 0) {
-                setRes(0, cur[F1], cur[B1]);
-                setRes(1, cur[F2], cur[B2]);
-                setRes(2, cur[F3], cur[B3]);
-                setRes(5, cur[FC], cur[FB]);
+                setRes(0, cur[F1] * fScale, cur[B1] * bwScale);
+                setRes(1, cur[F2] * fScale, cur[B2] * bwScale);
+                setRes(2, cur[F3] * fScale, cur[B3] * bwScale);
+                setRes(5, cur[FC] * (fScale > 1 ? 1.08f : 1f), cur[FB]);
             }
             // glottal source (Rosenberg pulse, differentiated)
             gph += ff / sr;
             if (gph >= 1) gph -= 1;
             float flow;
-            if (gph < 0.4) flow = 0.5f * (1f - (float) Math.cos(Math.PI * gph / 0.4));
-            else if (gph < 0.56) flow = (float) Math.cos(Math.PI * (gph - 0.4) / 0.32);
+            if (gph < openQ) flow = 0.5f * (1f - (float) Math.cos(Math.PI * gph / openQ));
+            else if (gph < openQ + closeQ) flow = (float) Math.cos(Math.PI * (gph - openQ) / (2 * closeQ));
             else flow = 0f;
             float src = (flow - prevFlow) * 6f;
             prevFlow = flow;
             float n = noise();
-            float voiced = src * cur[AV] + n * cur[AH] * 0.35f;
+            float voiced = src * cur[AV] * (fScale > 1 ? 0.72f : 1f) + n * (cur[AH] * 0.35f + cur[AV] * breath);
             float y = res(0, voiced);
             y = res(1, y);
             y = res(2, y);
