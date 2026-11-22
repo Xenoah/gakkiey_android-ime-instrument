@@ -12,7 +12,6 @@ import android.view.inputmethod.InputMethodManager;
 public final class GakkiIME extends InputMethodService implements InstrumentView.Host {
     private SoundEngine engine;
     private InstrumentView view;
-    private final RomajiComposer comp = new RomajiComposer();
 
     @Override
     public void onCreate() {
@@ -35,14 +34,12 @@ public final class GakkiIME extends InputMethodService implements InstrumentView
     @Override
     public void onStartInputView(EditorInfo info, boolean restarting) {
         super.onStartInputView(info, restarting);
-        comp.clear();
         if (view != null) view.onStartInput(info.inputType);
         engine.start(this);
     }
 
     @Override
     public void onFinishInputView(boolean finishingInput) {
-        flush();
         if (view != null) view.releaseAll();
         engine.stop();
         super.onFinishInputView(finishingInput);
@@ -61,35 +58,7 @@ public final class GakkiIME extends InputMethodService implements InstrumentView
         super.onDestroy();
     }
 
-    @Override
-    public void onUpdateSelection(int oldSelStart, int oldSelEnd, int newSelStart, int newSelEnd,
-                                  int candStart, int candEnd) {
-        super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candStart, candEnd);
-        // cursor moved away from the composing text -> fix it as is
-        if (!comp.isEmpty() && (candStart == -1 || newSelStart != candEnd || newSelEnd != candEnd)) {
-            comp.clear();
-            InputConnection ic = getCurrentInputConnection();
-            if (ic != null) ic.finishComposingText();
-        }
-    }
-
     // ---- typing
-    private void flush() {
-        InputConnection ic = getCurrentInputConnection();
-        if (ic == null) { comp.clear(); return; }
-        if (!comp.isEmpty()) ic.commitText(comp.finish(), 1);
-    }
-
-    private void showComposing(InputConnection ic) {
-        String d = comp.display();
-        if (d.isEmpty()) {
-            ic.setComposingText("", 1);
-            ic.finishComposingText();
-        } else {
-            ic.setComposingText(d, 1);
-        }
-    }
-
     private void enter(InputConnection ic) {
         EditorInfo ei = getCurrentInputEditorInfo();
         if (ei != null) {
@@ -106,49 +75,24 @@ public final class GakkiIME extends InputMethodService implements InstrumentView
     }
 
     @Override
-    public void onTypeKey(String code, boolean kana) {
+    public void onTypeKey(String code) {
         InputConnection ic = getCurrentInputConnection();
         if (ic == null) return;
         switch (code) {
-            case "FLUSH":
-                flush();
+            case "DEL": {
+                CharSequence sel = ic.getSelectedText(0);
+                if (sel != null && sel.length() > 0) ic.commitText("", 1);
+                else sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL);
                 return;
-            case "DEL":
-                if (!comp.isEmpty()) {
-                    comp.backspace();
-                    showComposing(ic);
-                } else {
-                    CharSequence sel = ic.getSelectedText(0);
-                    if (sel != null && sel.length() > 0) ic.commitText("", 1);
-                    else sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL);
-                }
-                return;
+            }
             case "SPACE":
-                if (!comp.isEmpty()) { // no dictionary: space toggles hiragana / katakana
-                    comp.toggleKatakana();
-                    showComposing(ic);
-                } else {
-                    ic.commitText(kana ? "　" : " ", 1);
-                }
+                ic.commitText(" ", 1);
                 return;
             case "ENTER":
-                if (!comp.isEmpty()) flush();
-                else enter(ic);
+                enter(ic);
                 return;
         }
-        char c = code.length() == 1 ? code.charAt(0) : 0;
-        if (kana && ((c >= 'a' && c <= 'z') || c == 'ー' || (c == '\'' && !comp.isEmpty()))) {
-            comp.type(c == 'ー' ? '-' : c);
-            showComposing(ic);
-            return;
-        }
-        flush();
         ic.commitText(code, 1);
-    }
-
-    @Override
-    public boolean isComposing() {
-        return !comp.isEmpty();
     }
 
     // ---- Host
@@ -170,7 +114,6 @@ public final class GakkiIME extends InputMethodService implements InstrumentView
 
     @Override
     public void onCommit(String text) {
-        flush();
         InputConnection ic = getCurrentInputConnection();
         if (ic != null) ic.commitText(text, 1);
     }

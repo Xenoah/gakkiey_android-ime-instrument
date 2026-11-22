@@ -37,8 +37,8 @@ public final class InstrumentView extends View {
         void onHide();
         void onCommit(String text);
         /** Typing-keyboard key. kana = romaji-kana composing allowed. */
-        void onTypeKey(String code, boolean kana);
-        boolean isComposing();
+        /** Typing-keyboard key: text to commit, or DEL / SPACE / ENTER. */
+        void onTypeKey(String code);
     }
 
     private static final String[] DO_RE_MI = {"ド", "ド#", "レ", "レ#", "ミ", "ファ", "ファ#", "ソ", "ソ#", "ラ", "ラ#", "シ"};
@@ -146,6 +146,7 @@ public final class InstrumentView extends View {
         int btn;
         float y;
         TKey tkey;
+        boolean speech;
     }
 
     private final Host host;
@@ -184,7 +185,8 @@ public final class InstrumentView extends View {
     private final List<String> voiceBuf = new ArrayList<>();
     private final RectF voiceDisplay = new RectF();
 
-    private boolean kanaLang = true;
+    /** ⌨ language: false = English letters, true = English IPA phonemes. */
+    private boolean ipaLang;
     private int page = PAGE_LETTERS;
     private int shift; // 0 off, 1 once, 2 caps lock
     private long lastShiftTap;
@@ -244,7 +246,7 @@ public final class InstrumentView extends View {
     private final Runnable delRepeat = new Runnable() {
         @Override public void run() {
             if (delKey == null) return;
-            host.onTypeKey("DEL", kanaLang);
+            host.onTypeKey("DEL");
             invalidate();
             postDelayed(this, 55);
         }
@@ -273,7 +275,7 @@ public final class InstrumentView extends View {
         voicePitchIdx = clamp(prefs.getInt("voicePitch", 1), 0, VOICE_PITCHES.length - 1);
         voiceType = clamp(prefs.getInt("voiceType", 0), 0, VOICE_TYPES.length - 1);
         textOut = prefs.getBoolean("text", false);
-        kanaLang = prefs.getBoolean("kana", true);
+        ipaLang = prefs.getBoolean("ipa", false);
         sound = clamp(sound, 0, SOUNDS.length - 1);
         widthIdx = clamp(widthIdx, 0, WIDTHS.length - 1);
         labelIdx = clamp(labelIdx, 0, LABELS.length - 1);
@@ -433,6 +435,12 @@ public final class InstrumentView extends View {
         }
     }
 
+    private static boolean isIpaPhoneme(String p) {
+        if (isVoiceVowel(p)) return true;
+        for (String s : Speech.CONSONANTS) if (s.equals(p)) return true;
+        return false;
+    }
+
     private static boolean isVoiceVowel(String p) {
         for (String s : Speech.VOWELS) if (s.equals(p)) return true;
         for (String s : Speech.DIPHTHONGS) if (s.equals(p)) return true;
@@ -492,7 +500,7 @@ public final class InstrumentView extends View {
                 return;
             case "VDEL":
                 if (!voiceBuf.isEmpty()) voiceBuf.remove(voiceBuf.size() - 1);
-                if (textOut) host.onTypeKey("DEL", false);
+                if (textOut) host.onTypeKey("DEL");
                 return;
             case "VSP":
                 voiceBuf.add(" ");
@@ -617,12 +625,27 @@ public final class InstrumentView extends View {
         }
         if (page == PAGE_SYM) {
             addRow(new String[]{"@", "#", "%", "&", "*", "-", "+", "=", "(", ")"}, ones(10), y0, rowH);
-            addRow(kanaLang ? new String[]{"!", "?", "「", "」", ":", ";", "/", "・", "…", "~"}
-                            : new String[]{"!", "?", "'", "\"", ":", ";", "/", "_", "\\", "~"}, ones(10), y0 + rowH, rowH);
+            addRow(new String[]{"!", "?", "'", "\"", ":", ";", "/", "_", "\\", "~"}, ones(10), y0 + rowH, rowH);
             addRow(new String[]{"[", "]", "{", "}", "<", ">", "^", "|", "DEL"},
                     new float[]{1, 1, 1, 1, 1, 1, 1, 1, 2}, y0 + rowH * 2, rowH);
-            addRow(new String[]{"ALPHA", "NUM", kanaLang ? "、" : ",", "SPACE", kanaLang ? "。" : ".", "ENTER"},
+            addRow(new String[]{"ALPHA", "NUM", ",", "SPACE", ".", "ENTER"},
                     new float[]{1.3f, 1.1f, 1f, 3.7f, 1f, 1.9f}, y0 + rowH * 3, rowH);
+            return;
+        }
+        if (ipaLang) { // English IPA: 44 phonemes in 4 rows + function row
+            float rh = (body.height() - gap) / 5f;
+            String[] r0 = new String[10], r1 = new String[10], r2 = new String[10], r3 = new String[14];
+            System.arraycopy(Speech.VOWELS, 0, r0, 0, 10);
+            r1[0] = Speech.VOWELS[10]; r1[1] = Speech.VOWELS[11];
+            System.arraycopy(Speech.DIPHTHONGS, 0, r1, 2, 8);
+            System.arraycopy(Speech.CONSONANTS, 0, r2, 0, 10);
+            System.arraycopy(Speech.CONSONANTS, 10, r3, 0, 14);
+            addRow(r0, ones(10), y0, rh);
+            addRow(r1, ones(10), y0 + rh, rh);
+            addRow(r2, ones(10), y0 + rh * 2, rh);
+            addRow(r3, ones(14), y0 + rh * 3, rh);
+            addRow(new String[]{"NUM", "LANG", Speech.STRESS, "SPACE", "/", "DEL", "ENTER"},
+                    new float[]{1.2f, 1.2f, 0.9f, 3.0f, 0.9f, 1.3f, 1.5f}, y0 + rh * 4, rh);
             return;
         }
         // letters: rows 0-2 keep 10-key unit width, centred
@@ -648,12 +671,8 @@ public final class InstrumentView extends View {
                 tkeys.add(k);
             }
         }
-        if (kanaLang)
-            addRow(new String[]{"NUM", "LANG", "、", "SPACE", "ー", "。", "ENTER"},
-                    new float[]{1.3f, 1.1f, 0.9f, 3.0f, 0.9f, 0.9f, 1.9f}, y0 + rowH * 3, rowH);
-        else
-            addRow(new String[]{"NUM", "LANG", ",", "SPACE", ".", "ENTER"},
-                    new float[]{1.3f, 1.1f, 1f, 3.7f, 1f, 1.9f}, y0 + rowH * 3, rowH);
+        addRow(new String[]{"NUM", "LANG", ",", "SPACE", ".", "ENTER"},
+                new float[]{1.3f, 1.1f, 1f, 3.7f, 1f, 1.9f}, y0 + rowH * 3, rowH);
     }
 
     // ------------------------------------------------------------------ menu (sectioned per tab)
@@ -1117,10 +1136,10 @@ public final class InstrumentView extends View {
             case "DEL": return "⌫";
             case "NUM": return "123";
             case "SYM2": return "#+=";
-            case "ALPHA": return kanaLang ? "あいう" : "ABC";
-            case "LANG": return "あA";
-            case "SPACE": return kanaLang ? (host.isComposing() ? "カナ" : "空白") : "space";
-            case "ENTER": return host.isComposing() ? "確定" : "⏎";
+            case "ALPHA": return ipaLang ? "æ" : "ABC";
+            case "LANG": return "Aæ";
+            case "SPACE": return "space";
+            case "ENTER": return "⏎";
         }
         if (page == PAGE_LETTERS && shift > 0 && k.code.length() == 1) return k.code.toUpperCase();
         return k.code;
@@ -1138,7 +1157,11 @@ public final class InstrumentView extends View {
             boolean fn = k.code.length() > 1;
             boolean dial = isDialKey(k);
             boolean accent = k.code.equals("ENTER") || (k.code.equals("SHIFT") && shift > 0);
-            int col = down ? ACCENT : accent ? 0xFF2A6F86 : dial ? 0xFF3A4058 : fn ? 0xFF262A3A : 0xFF323748;
+            boolean ipaKey = ipaLang && page == PAGE_LETTERS && isIpaPhoneme(k.code);
+            if (ipaKey) fn = false;
+            int col = down ? ACCENT : accent ? 0xFF2A6F86 : dial ? 0xFF3A4058 : fn ? 0xFF262A3A
+                    : ipaKey ? (isVoiceVowel(k.code) ? (k.code.length() == 2 && !k.code.endsWith("ː") ? 0xFF4A3466 : 0xFF5A2E48) : 0xFF2D3C52)
+                    : 0xFF323748;
             fill.setShader(null);
             fill.setColor(col);
             tmp.set(k.r.left + in, k.r.top + in, k.r.right - in, k.r.bottom - in);
@@ -1146,18 +1169,18 @@ public final class InstrumentView extends View {
             String lb = tLabel(k);
             text.setColor(0xFFF2F3F8);
             if (k.code.equals("LANG")) {
-                // "あ A" side by side, the active language lit (like Gboard)
+                // "A æ" side by side, the active language lit (like Gboard)
                 float sz = Math.min(19 * dp, tmp.height() * 0.42f);
                 text.setTextSize(sz);
-                float gap = sz * 0.15f;
-                float wa = text.measureText("あ"), wA = text.measureText("A");
-                float x0 = tmp.centerX() - (wa + gap + wA) / 2f;
+                float gap = sz * 0.2f;
+                float wA = text.measureText("A"), wae = text.measureText("æ");
+                float x0 = tmp.centerX() - (wA + gap + wae) / 2f;
                 float by = tmp.centerY() - (text.descent() + text.ascent()) / 2;
                 text.setTextAlign(Paint.Align.LEFT);
-                text.setColor(kanaLang ? 0xFF7CFF4F : 0xFF6A7088);
-                c.drawText("あ", x0, by, text);
-                text.setColor(kanaLang ? 0xFF6A7088 : 0xFFF2F3F8);
-                c.drawText("A", x0 + wa + gap, by, text);
+                text.setColor(ipaLang ? 0xFF6A7088 : 0xFFF2F3F8);
+                c.drawText("A", x0, by, text);
+                text.setColor(ipaLang ? 0xFF7CFF4F : 0xFF6A7088);
+                c.drawText("æ", x0 + wA + gap, by, text);
                 text.setTextAlign(Paint.Align.CENTER);
             } else if (dial) {
                 int d = Character.isDigit(k.code.charAt(0)) ? k.code.charAt(0) - '0' : -1;
@@ -1171,8 +1194,10 @@ public final class InstrumentView extends View {
                     centerText(c, sub, tmp.centerX(), cy + 17 * dp);
                 }
             } else {
-                text.setTextSize((lb.length() > 2 ? 13 : 19) * dp);
+                text.setTextSize((lb.length() > 2 && !ipaKey ? 13 : Math.min(19 * dp, tmp.height() * 0.48f) / dp) * dp);
+                if (ipaKey) text.setTypeface(Typeface.DEFAULT);
                 centerText(c, lb, tmp.centerX(), tmp.centerY());
+                text.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
             }
         }
     }
@@ -1472,7 +1497,7 @@ public final class InstrumentView extends View {
             if (del || clr) {
                 if (del) {
                     if (dialed.length() > 0) dialed.setLength(dialed.length() - 1);
-                    if (textOut) host.onTypeKey("DEL", false);
+                    if (textOut) host.onTypeKey("DEL");
                 } else {
                     dialed.setLength(0);
                 }
@@ -1508,6 +1533,12 @@ public final class InstrumentView extends View {
                 if (dtmf) {
                     t.voiceKey = synth.newKey();
                     synth.dtmfOn(t.voiceKey, k.code.charAt(0), PHONE_VOL[phoneVolIdx]);
+                }
+            } else if (ipaLang && page == PAGE_LETTERS && isIpaPhoneme(k.code)) {
+                if (seVolIdx > 0) {
+                    t.voiceKey = synth.newKey();
+                    t.speech = true;
+                    synth.speech().hold(t.voiceKey, k.code, voiceF0());
                 }
             } else {
                 playSE(k.code);
@@ -1614,7 +1645,10 @@ public final class InstrumentView extends View {
             phoneHeld[t.midi] = Math.max(0, phoneHeld[t.midi] - 1);
             invalidate();
         } else if (t.type == 4) {
-            if (t.voiceKey != 0) synth.noteOff(t.voiceKey);
+            if (t.voiceKey != 0) {
+                if (t.speech) synth.speech().release(t.voiceKey);
+                else synth.noteOff(t.voiceKey);
+            }
             if (t.tkey != null && t.tkey == delKey) { removeCallbacks(delRepeat); delKey = null; }
             invalidate();
         } else if (t.type == 3 && t.btn == B_GLOBE) {
@@ -1637,23 +1671,23 @@ public final class InstrumentView extends View {
             case "SYM2": setPage(PAGE_SYM); break;
             case "ALPHA": setPage(PAGE_LETTERS); break;
             case "LANG":
-                host.onTypeKey("FLUSH", kanaLang);
-                kanaLang = !kanaLang;
-                prefs.edit().putBoolean("kana", kanaLang).apply();
+                ipaLang = !ipaLang;
+                prefs.edit().putBoolean("ipa", ipaLang).apply();
+                shift = 0;
                 layoutTyping();
                 break;
             case "DEL":
-                host.onTypeKey("DEL", kanaLang);
+                host.onTypeKey("DEL");
                 delKey = k;
                 postDelayed(delRepeat, 420);
                 break;
             case "SPACE": case "ENTER":
-                host.onTypeKey(k.code, kanaLang);
+                host.onTypeKey(k.code);
                 break;
             default: {
                 String out = k.code;
-                if (page == PAGE_LETTERS && shift > 0) out = out.toUpperCase();
-                host.onTypeKey(out, kanaLang && page == PAGE_LETTERS);
+                if (page == PAGE_LETTERS && shift > 0 && !ipaLang) out = out.toUpperCase();
+                host.onTypeKey(out);
                 if (shift == 1) shift = 0;
             }
         }
@@ -1687,7 +1721,6 @@ public final class InstrumentView extends View {
         menuOpen = false;
         if (m == mode) { relayout(); return; }
         releaseAll();
-        if (mode == MODE_TYPE) host.onTypeKey("FLUSH", kanaLang);
         mode = m;
         save();
         relayout();
@@ -1697,7 +1730,7 @@ public final class InstrumentView extends View {
     public void onStartInput(int inputType) {
         int cls = inputType & InputType.TYPE_MASK_CLASS;
         int var = inputType & InputType.TYPE_MASK_VARIATION;
-        kanaLang = prefs.getBoolean("kana", true);
+        ipaLang = prefs.getBoolean("ipa", false);
         page = PAGE_LETTERS;
         if (cls == InputType.TYPE_CLASS_NUMBER || cls == InputType.TYPE_CLASS_PHONE
                 || cls == InputType.TYPE_CLASS_DATETIME) {
@@ -1709,7 +1742,7 @@ public final class InstrumentView extends View {
                         || var == InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
                         || var == InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS
                         || var == InputType.TYPE_TEXT_VARIATION_URI)) {
-            kanaLang = false;
+            ipaLang = false;
         }
         shift = 0;
         layoutTyping();
@@ -1720,7 +1753,8 @@ public final class InstrumentView extends View {
     public void releaseAll() {
         for (int i = 0; i < touches.size(); i++) {
             Touch t = touches.valueAt(i);
-            if ((t.type == 1 || t.type == 4 || t.type == 6) && t.voiceKey != 0) synth.noteOff(t.voiceKey);
+            if ((t.type == 1 || t.type == 4 || t.type == 6) && t.voiceKey != 0 && !t.speech) synth.noteOff(t.voiceKey);
+            if (t.type == 4 && t.speech) synth.speech().release(t.voiceKey);
             if (t.type == 7 && t.voiceKey != 0) synth.speech().release(t.voiceKey);
         }
         touches.clear();
