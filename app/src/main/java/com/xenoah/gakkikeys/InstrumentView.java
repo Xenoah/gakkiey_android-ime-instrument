@@ -829,7 +829,7 @@ public final class InstrumentView extends View {
             case B_OCT_UP: return "▶";
             case B_SUS: return "SUS";
             case B_MENU: return menuOpen ? "✕" : "⚙";
-            case B_TXT: return "あ";
+            case B_TXT: return "✎";
             case B_GLOBE: return "🌐";
             case B_HIDE: return "▼";
         }
